@@ -23,7 +23,7 @@ LDLIBS    = `pkg-config --libs $(PKGS)` $(LIBS)
 all: dwl
 dwl: dwl.o util.o
 	$(CC) dwl.o util.o $(LDLIBS) $(LDFLAGS) -o $@
-dwl.o: dwl.c config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h idle-protocol.h
+dwl.o: dwl.c config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h idle-protocol.h wlr-output-power-management-unstable-v1-protocol.h
 util.o: util.c util.h
 
 # wayland scanner rules to generate .h / .c files
@@ -36,6 +36,9 @@ wlr-layer-shell-unstable-v1-protocol.h:
 idle-protocol.h:
 	$(WAYLAND_SCANNER) server-header \
 		protocols/idle.xml $@
+wlr-output-power-management-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) server-header \
+		protocols/wlr-output-power-management-unstable-v1.xml $@
 
 config.h:
 	cp config.def.h $@
