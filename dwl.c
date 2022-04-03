@@ -27,6 +27,7 @@
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_matrix.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/interfaces/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
@@ -1612,6 +1613,8 @@ powermgrsetmodenotify(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_power_v1_set_mode_event *event = data;
 	wlr_output_enable(event->output, event->mode);
+	if (event->mode)
+		wlr_output_damage_whole(event->output);
 	wlr_output_commit(event->output);
 }
 
