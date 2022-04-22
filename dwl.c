@@ -117,6 +117,7 @@ typedef struct {
 	unsigned int tags;
 	int isfloating, isurgent;
 	uint32_t resize; /* configure serial of a pending resize */
+	int allmons;
 	int isfullscreen;
 } Client;
 
@@ -205,6 +206,7 @@ static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyexclusive(struct wlr_box *usable_area, uint32_t anchor,
 		int32_t exclusive, int32_t margin_top, int32_t margin_right,
 		int32_t margin_bottom, int32_t margin_left);
+static void center(Client *c, struct wlr_output *wlr_output);
 static void applyrules(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
@@ -448,6 +450,26 @@ applyexclusive(struct wlr_box *usable_area,
 }
 
 void
+center(Client *c, struct wlr_output *wlr_output)
+{
+	struct wlr_box *box = wlr_output_layout_get_box(output_layout, wlr_output);
+
+	c->geom.x = cursor->x - c->geom.width / 2;
+	if (c->geom.x + c->geom.width > box->x + box->width)
+		c->geom.x = box->x + box->width - c->geom.width;
+	if (c->geom.x < box->x || c->geom.width > box->width)
+		c->geom.x = box->x;
+
+	c->geom.y = cursor->y - c->geom.height / 2;
+	if (c->geom.y + c->geom.height > box->y + box->height)
+		c->geom.y = box->y + box->height - c->geom.height;
+	if (c->geom.y < box->y || c->geom.height > box->height)
+		c->geom.y = box->y;
+
+	wlr_scene_node_set_position(c->scene, c->geom.x, c->geom.y);
+}
+
+void
 applyrules(Client *c)
 {
 	/* rule matching */
@@ -455,6 +477,7 @@ applyrules(Client *c)
 	unsigned int i, newtags = 0;
 	const Rule *r;
 	Monitor *mon = selmon, *m;
+	Client *oc;
 
 	c->isfloating = client_is_float_type(c);
 	if (!(appid = client_get_appid(c)))
@@ -471,6 +494,17 @@ applyrules(Client *c)
 			wl_list_for_each(m, &mons, link)
 				if (r->monitor == i++)
 					mon = m;
+		}
+	}
+	c->isfullscreen = 1;
+	c->allmons = 1;
+	wl_list_for_each(oc, &clients, link) {
+		if (oc != c) {
+			c->isfloating = 1;
+			c->isfullscreen = 0;
+			c->allmons = 0;
+			center(c, mon->wlr_output);
+			break;
 		}
 	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
@@ -1081,7 +1115,7 @@ focusclient(Client *c, int lift)
 	int i;
 
 	/* Raise client in stacking order if requested */
-	if (c && lift)
+	if (c && lift && c->isfloating)
 		wlr_scene_node_raise_to_top(c->scene);
 
 	if (c && client_surface(c) == old)
@@ -1806,13 +1840,18 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	struct wlr_box *layout_box;
+
 	c->isfullscreen = fullscreen;
 	c->bw = fullscreen ? 0 : borderpx;
 	client_set_fullscreen(c, fullscreen);
 
 	if (fullscreen) {
 		c->prev = c->geom;
-		resize(c, c->mon->m.x, c->mon->m.y, c->mon->m.width, c->mon->m.height, 0);
+		if (c->allmons) {
+			layout_box = wlr_output_layout_get_box(output_layout, NULL);
+			resize(c, layout_box->x, layout_box->y, layout_box->width, layout_box->height, 0);
+		} else resize(c, c->mon->m.x, c->mon->m.y, c->mon->m.width, c->mon->m.height, 0);
 	} else {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
