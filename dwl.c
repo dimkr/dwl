@@ -208,6 +208,7 @@ static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyexclusive(struct wlr_box *usable_area, uint32_t anchor,
 		int32_t exclusive, int32_t margin_top, int32_t margin_right,
 		int32_t margin_bottom, int32_t margin_left);
+static void center(Client *c, struct wlr_output *wlr_output);
 static void applyrules(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
@@ -291,6 +292,7 @@ static void updatemons(struct wl_listener *listener, void *data);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
 static void view(const Arg *arg);
+static void nextstacked(const Arg *arg);
 static void virtualkeyboard(struct wl_listener *listener, void *data);
 static struct wlr_scene_node *xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
@@ -451,6 +453,26 @@ applyexclusive(struct wlr_box *usable_area,
 }
 
 void
+center(Client *c, struct wlr_output *wlr_output)
+{
+	struct wlr_box *box = wlr_output_layout_get_box(output_layout, wlr_output);
+
+	c->geom.x = cursor->x - c->geom.width / 2;
+	if (c->geom.x + c->geom.width > box->x + box->width)
+		c->geom.x = box->x + box->width - c->geom.width;
+	if (c->geom.x < box->x || c->geom.width > box->width)
+		c->geom.x = box->x;
+
+	c->geom.y = cursor->y - c->geom.height / 2;
+	if (c->geom.y + c->geom.height > box->y + box->height)
+		c->geom.y = box->y + box->height - c->geom.height;
+	if (c->geom.y < box->y || c->geom.height > box->height)
+		c->geom.y = box->y;
+
+	wlr_scene_node_set_position(c->scene, c->geom.x, c->geom.y);
+}
+
+void
 applyrules(Client *c)
 {
 	/* rule matching */
@@ -476,6 +498,8 @@ applyrules(Client *c)
 					mon = m;
 		}
 	}
+	c->isfloating = 1;
+	center(c, mon->wlr_output);
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
 }
@@ -2321,6 +2345,21 @@ view(const Arg *arg)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
+	printstatus();
+}
+
+void
+nextstacked(const Arg *arg)
+{
+	Client *c, *first;
+	wl_list_for_each(c, &fstack, flink) {
+		if (VISIBLEON(c, selmon) && !first) first = c;
+		else if (VISIBLEON(c, selmon) && first) {
+			focusclient(c, 1);
+			arrange(selmon);
+			break;
+		}
+	}
 	printstatus();
 }
 
