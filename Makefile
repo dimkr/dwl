@@ -74,11 +74,21 @@ idle-protocol.c:
 	$(WAYLAND_SCANNER) private-code \
 		protocols/idle.xml $@
 
-idle-protocol.o: idle-protocol.h
+wlr-output-power-management-unstable-v1-protocol.o: wlr-output-power-management-unstable-v1-protocol.h
+
+wlr-output-power-management-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) server-header \
+		protocols/wlr-output-power-management-unstable-v1.xml $@
+
+wlr-output-power-management-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		protocols/wlr-output-power-management-unstable-v1.xml $@
+
+wlr-output-power-management-unstable-v1-protocol.o: wlr-output-power-management-unstable-v1-protocol.h
 
 config.h: | config.def.h
 	cp config.def.h $@
 
-dwl.o: config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h idle-protocol.h util.h pointer-constraints-unstable-v1-protocol.h
+dwl.o: config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h idle-protocol.h util.h pointer-constraints-unstable-v1-protocol.h wlr-output-power-management-unstable-v1-protocol.h
 
-dwl: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o idle-protocol.o util.o pointer-constraints-unstable-v1-protocol.o
+dwl: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o idle-protocol.o util.o pointer-constraints-unstable-v1-protocol.o wlr-output-power-management-unstable-v1-protocol.o
