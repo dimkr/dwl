@@ -22,6 +22,7 @@
 #include <wlr/types/wlr_data_control_v1.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -100,6 +101,7 @@ typedef struct {
 	struct wlr_scene_node *scene;
 	struct wlr_scene_rect *border[4]; /* top, bottom, left, right */
 	struct wlr_scene_node *scene_surface;
+	struct wlr_foreign_toplevel_handle_v1 *toplevel_handle;
 	struct wl_list link;
 	struct wl_list flink;
 	union {
@@ -111,10 +113,13 @@ typedef struct {
 	struct wl_listener unmap;
 	struct wl_listener destroy;
 	struct wl_listener set_title;
+	struct wl_listener set_app_id;
 	struct wl_listener fullscreen;
 	struct wl_listener request_move;
 	struct wl_listener request_resize;
 	struct wl_listener request_maximize;
+	struct wl_listener toplevel_request_activate;
+	struct wl_listener toplevel_request_maximize;
 	struct wlr_box geom, prev;  /* layout-relative, includes border */
 	Monitor *mon;
 #ifdef XWAYLAND
@@ -220,6 +225,7 @@ typedef struct {
 } Rule;
 
 /* function declarations */
+static void activatetoplevel(struct wl_listener *listener, void *data);
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyexclusive(struct wlr_box *usable_area, uint32_t anchor,
 		int32_t exclusive, int32_t margin_top, int32_t margin_right,
@@ -267,6 +273,7 @@ static void keypressmod(struct wl_listener *listener, void *data);
 static void killclient(const Arg *arg);
 static void maplayersurfacenotify(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
+static void maximizetoplevel(struct wl_listener *listener, void *data);
 static void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
 static void motionnotify(uint32_t time);
@@ -312,6 +319,7 @@ static void toggleview(const Arg *arg);
 static void unmaplayersurface(LayerSurface *layersurface);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
+static void updateappid(struct wl_listener *listener, void *data);
 static void updatemons(struct wl_listener *listener, void *data);
 static void updatetitle(struct wl_listener *listener, void *data);
 static void urgent(struct wl_listener *listener, void *data);
@@ -339,6 +347,7 @@ static struct wl_list fstack;  /* focus order */
 static struct wlr_idle *idle;
 static struct wlr_idle_inhibit_manager_v1 *idle_inhibit_mgr;
 static struct wlr_input_inhibit_manager *input_inhibit_mgr;
+static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
 static struct wlr_layer_shell_v1 *layer_shell;
 static struct wlr_output_manager_v1 *output_mgr;
 static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
@@ -413,6 +422,13 @@ static Atom netatom[NetLast];
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 
 /* function implementations */
+void
+activatetoplevel(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, toplevel_request_activate);
+	focusclient(c, 1);
+}
+
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
@@ -1081,6 +1097,7 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&xdg_surface->events.unmap, &c->unmap, unmapnotify);
 	LISTEN(&xdg_surface->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&xdg_surface->toplevel->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&xdg_surface->toplevel->events.set_app_id, &c->set_app_id, updateappid);
 	LISTEN(&xdg_surface->toplevel->events.request_fullscreen, &c->fullscreen,
 			fullscreennotify);
 	LISTEN(&xdg_surface->toplevel->events.request_move, &c->request_move,
@@ -1089,6 +1106,15 @@ createnotify(struct wl_listener *listener, void *data)
 			startresize);
 	LISTEN(&xdg_surface->toplevel->events.request_maximize, &c->request_maximize,
 			togglemaximize);
+
+	c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(
+			foreign_toplevel_mgr);
+	if (c->toplevel_handle) {
+		LISTEN(&c->toplevel_handle->events.request_activate,
+				&c->toplevel_request_activate, activatetoplevel);
+		LISTEN(&c->toplevel_handle->events.request_maximize,
+				&c->toplevel_request_maximize, maximizetoplevel);
+	}
 	c->isfullscreen = 0;
 	c->ismaximized = 0;
 }
@@ -1380,10 +1406,16 @@ destroynotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is destroyed and should never be shown again. */
 	Client *c = wl_container_of(listener, c, destroy);
+	if (c->toplevel_handle) {
+		wl_list_remove(&c->toplevel_request_activate.link);
+		wl_list_remove(&c->toplevel_request_maximize.link);
+		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
+	}
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
+	wl_list_remove(&c->set_app_id.link);
 	wl_list_remove(&c->fullscreen.link);
 	wl_list_remove(&c->request_move.link);
 	wl_list_remove(&c->request_resize.link);
@@ -1502,6 +1534,9 @@ focusclient(Client *c, int lift)
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
+
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, true);
 }
 
 void
@@ -1746,6 +1781,14 @@ mapnotify(struct wl_listener *listener, void *data)
 		client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 
 	c->mon->un_map = 1;
+}
+
+void
+maximizetoplevel(struct wl_listener *listener, void *data)
+{
+	struct wlr_foreign_toplevel_handle_v1_maximized_event *event = data;
+	Client *c = wl_container_of(listener, c, toplevel_request_maximize);
+	setmaximized(c, event->maximized);
 }
 
 void
@@ -2215,6 +2258,8 @@ setfullscreen(Client *c, int fullscreen)
 		resize(c, c->prev.x, c->prev.y, c->prev.width, c->prev.height, 0);
 	}
 	arrange(c->mon);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_fullscreen(c->toplevel_handle, fullscreen);
 	printstatus();
 }
 
@@ -2244,6 +2289,8 @@ setmaximized(Client *c, int maximized)
 	} else
 		resize(c, c->prev.x, c->prev.y, c->prev.width, c->prev.height, 0);
 	arrange(c->mon);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, maximized);
 	printstatus();
 }
 
@@ -2274,6 +2321,9 @@ setmon(Client *c, Monitor *m, unsigned int newtags)
 	/* TODO leave/enter is not optimal but works */
 	if (oldmon) {
 		wlr_surface_send_leave(client_surface(c), oldmon->wlr_output);
+		if (c->toplevel_handle)
+			wlr_foreign_toplevel_handle_v1_output_leave(c->toplevel_handle,
+					oldmon->wlr_output);
 		arrange(oldmon);
 	}
 	if (m) {
@@ -2284,6 +2334,9 @@ setmon(Client *c, Monitor *m, unsigned int newtags)
 		arrange(m);
 	}
 	focusclient(focustop(selmon), 1);
+	if (c->toplevel_handle && c->mon)
+		wlr_foreign_toplevel_handle_v1_output_enter(c->toplevel_handle,
+				c->mon->wlr_output);
 }
 
 void
@@ -2404,6 +2457,8 @@ setup(void)
 	wl_signal_add(&xdg_shell->events.new_surface, &new_xdg_surface);
 
 	input_inhibit_mgr = wlr_input_inhibit_manager_create(dpy);
+
+	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
 
 	/* Use decoration protocols to negotiate server-side decorations */
 	wlr_server_decoration_manager_set_default_mode(
@@ -2693,6 +2748,14 @@ unmapnotify(struct wl_listener *listener, void *data)
 }
 
 void
+updateappid(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, set_app_id);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, client_get_appid(c));
+}
+
+void
 updatemons(struct wl_listener *listener, void *data)
 {
 	/*
@@ -2736,6 +2799,8 @@ updatetitle(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_title);
 	if (c == focustop(c->mon))
 		printstatus();
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, client_get_title(c));
 }
 
 void
@@ -2887,6 +2952,7 @@ createnotifyx11(struct wl_listener *listener, void *data)
 			configurex11);
 	LISTEN(&xwayland_surface->events.set_hints, &c->set_hints, sethints);
 	LISTEN(&xwayland_surface->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&xwayland_surface->events.set_class, &c->set_app_id, updateappid);
 	LISTEN(&xwayland_surface->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&xwayland_surface->events.request_fullscreen, &c->fullscreen,
 			fullscreennotify);
@@ -2896,6 +2962,15 @@ createnotifyx11(struct wl_listener *listener, void *data)
 			startresize);
 	LISTEN(&xwayland_surface->events.request_maximize, &c->request_maximize,
 			togglemaximize);
+
+	c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(
+			foreign_toplevel_mgr);
+	if (c->toplevel_handle) {
+		LISTEN(&c->toplevel_handle->events.request_activate,
+				&c->toplevel_request_activate, activatetoplevel);
+		LISTEN(&c->toplevel_handle->events.request_maximize,
+				&c->toplevel_request_maximize, maximizetoplevel);
+	}
 }
 
 Atom
