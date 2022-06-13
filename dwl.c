@@ -2291,7 +2291,7 @@ setmaximized(Client *c, int maximized)
 
 	if (maximized) {
 		c->prev = c->geom;
-		resize(c, c->mon->m.x, c->mon->m.y, c->mon->m.width, c->mon->m.height, 0);
+		resize(c, c->mon->w.x, c->mon->w.y, c->mon->w.width, c->mon->w.height, 0);
 	} else
 		resize(c, c->prev.x, c->prev.y, c->prev.width, c->prev.height, 0);
 	arrange(c->mon);
