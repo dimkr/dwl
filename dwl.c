@@ -364,6 +364,7 @@ static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 static int kiosk = 0;
+static int floating = 0;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -559,6 +560,9 @@ applyrules(Client *c)
 				break;
 			}
 		}
+	} else if (floating) {
+		c->isfloating = 1;
+		center(c, &mon->w);
 	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
@@ -3048,11 +3052,13 @@ main(int argc, char *argv[])
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hvk")) != -1) {
+	while ((c = getopt(argc, argv, "s:hvfk")) != -1) {
 		if (c == 's')
 			startup_cmd = optarg;
 		else if (c == 'v')
 			die("dwl " VERSION);
+		else if (c == 'f')
+			floating = 1;
 		else if (c == 'k')
 			kiosk = 1;
 		else
@@ -3070,5 +3076,5 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-s startup command]", argv[0]);
+	die("Usage: %s [-v] [-f] [-k] [-s startup command]", argv[0]);
 }
