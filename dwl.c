@@ -2367,6 +2367,8 @@ setsel(struct wl_listener *listener, void *data)
 void
 setup(void)
 {
+	const char *gdk_backend;
+
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
@@ -2530,6 +2532,13 @@ setup(void)
 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
 
 #ifdef XWAYLAND
+	/*
+	 * XWayland is started and DISPLAY is set manually if GDK_BACKEND=x11
+	 */
+	gdk_backend = getenv("GDK_BACKEND");
+	if (gdk_backend && strcmp(gdk_backend, "x11") == 0)
+		return;
+
 	/*
 	 * Initialise the XWayland X server.
 	 * It will be started when the first X client is started.
