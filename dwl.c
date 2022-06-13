@@ -230,7 +230,7 @@ static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyexclusive(struct wlr_box *usable_area, uint32_t anchor,
 		int32_t exclusive, int32_t margin_top, int32_t margin_right,
 		int32_t margin_bottom, int32_t margin_left);
-static void center(Client *c, struct wlr_output *wlr_output);
+static void center(Client *c, const struct wlr_box *box);
 static void applyrules(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
@@ -503,10 +503,8 @@ applyexclusive(struct wlr_box *usable_area,
 }
 
 void
-center(Client *c, struct wlr_output *wlr_output)
+center(Client *c, const struct wlr_box *box)
 {
-	struct wlr_box *box = wlr_output_layout_get_box(output_layout, wlr_output);
-
 	c->geom.x = cursor->x - c->geom.width / 2;
 	if (c->geom.x + c->geom.width > box->x + box->width)
 		c->geom.x = box->x + box->width - c->geom.width;
@@ -557,7 +555,7 @@ applyrules(Client *c)
 				c->isfloating = 1;
 				c->isfullscreen = 0;
 				c->allmons = 0;
-				center(c, mon->wlr_output);
+				center(c, &mon->w);
 				break;
 			}
 		}
