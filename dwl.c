@@ -363,6 +363,7 @@ static struct wl_list keyboards;
 static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
+static int kiosk = 0;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -548,15 +549,17 @@ applyrules(Client *c)
 					mon = m;
 		}
 	}
-	c->isfullscreen = 1;
-	c->allmons = 1;
-	wl_list_for_each(oc, &clients, link) {
-		if (oc != c) {
-			c->isfloating = 1;
-			c->isfullscreen = 0;
-			c->allmons = 0;
-			center(c, mon->wlr_output);
-			break;
+	if (kiosk) {
+		c->isfullscreen = 1;
+		c->allmons = 1;
+		wl_list_for_each(oc, &clients, link) {
+			if (oc != c) {
+				c->isfloating = 1;
+				c->isfullscreen = 0;
+				c->allmons = 0;
+				center(c, mon->wlr_output);
+				break;
+			}
 		}
 	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
@@ -3047,11 +3050,13 @@ main(int argc, char *argv[])
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hv")) != -1) {
+	while ((c = getopt(argc, argv, "s:hvk")) != -1) {
 		if (c == 's')
 			startup_cmd = optarg;
 		else if (c == 'v')
 			die("dwl " VERSION);
+		else if (c == 'k')
+			kiosk = 1;
 		else
 			goto usage;
 	}
