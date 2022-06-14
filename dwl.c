@@ -2267,6 +2267,8 @@ setfloating(Client *c, int floating)
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	if (floating)
 		center(c, &c->mon->w);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, floating);
 	arrange(c->mon);
 	printstatus();
 }
