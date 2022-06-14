@@ -118,8 +118,10 @@ typedef struct {
 	struct wl_listener request_move;
 	struct wl_listener request_resize;
 	struct wl_listener request_maximize;
+	struct wl_listener request_minimize;
 	struct wl_listener toplevel_request_activate;
 	struct wl_listener toplevel_request_maximize;
+	struct wl_listener toplevel_request_minimize;
 	struct wlr_box geom, prev;  /* layout-relative, includes border */
 	Monitor *mon;
 #ifdef XWAYLAND
@@ -274,6 +276,7 @@ static void killclient(const Arg *arg);
 static void maplayersurfacenotify(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizetoplevel(struct wl_listener *listener, void *data);
+static void minimizetoplevel(struct wl_listener *listener, void *data);
 static void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
 static void motionnotify(uint32_t time);
@@ -314,6 +317,7 @@ static void tile(Monitor *m);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
 static void togglemaximize(struct wl_listener *listener, void *data);
+static void toggleminimize(struct wl_listener *listener, void *data);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unmaplayersurface(LayerSurface *layersurface);
@@ -1111,6 +1115,8 @@ createnotify(struct wl_listener *listener, void *data)
 			startresize);
 	LISTEN(&xdg_surface->toplevel->events.request_maximize, &c->request_maximize,
 			togglemaximize);
+	LISTEN(&xdg_surface->toplevel->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 
 	c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(
 			foreign_toplevel_mgr);
@@ -1119,6 +1125,8 @@ createnotify(struct wl_listener *listener, void *data)
 				&c->toplevel_request_activate, activatetoplevel);
 		LISTEN(&c->toplevel_handle->events.request_maximize,
 				&c->toplevel_request_maximize, maximizetoplevel);
+		LISTEN(&c->toplevel_handle->events.request_minimize,
+				&c->toplevel_request_minimize, minimizetoplevel);
 	}
 	c->isfullscreen = 0;
 	c->ismaximized = 0;
@@ -1417,6 +1425,7 @@ destroynotify(struct wl_listener *listener, void *data)
 	if (c->toplevel_handle) {
 		wl_list_remove(&c->toplevel_request_activate.link);
 		wl_list_remove(&c->toplevel_request_maximize.link);
+		wl_list_remove(&c->toplevel_request_minimize.link);
 		wlr_foreign_toplevel_handle_v1_destroy(c->toplevel_handle);
 	}
 	wl_list_remove(&c->map.link);
@@ -1428,6 +1437,7 @@ destroynotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&c->request_move.link);
 	wl_list_remove(&c->request_resize.link);
 	wl_list_remove(&c->request_maximize.link);
+	wl_list_remove(&c->request_minimize.link);
 #ifdef XWAYLAND
 	if (c->type != XDGShell) {
 		wl_list_remove(&c->configure.link);
@@ -1471,7 +1481,7 @@ focusclient(Client *c, int lift)
 	int i;
 
 	/* Raise client in stacking order if requested */
-	if (c && lift && c->isfloating)
+	if (c && lift && (!kiosk || c->isfloating))
 		wlr_scene_node_raise_to_top(c->scene);
 
 	if (c && client_surface(c) == old)
@@ -1797,6 +1807,14 @@ maximizetoplevel(struct wl_listener *listener, void *data)
 	struct wlr_foreign_toplevel_handle_v1_maximized_event *event = data;
 	Client *c = wl_container_of(listener, c, toplevel_request_maximize);
 	setmaximized(c, event->maximized);
+}
+
+void
+minimizetoplevel(struct wl_listener *listener, void *data)
+{
+	struct wlr_foreign_toplevel_handle_v1_minimized_event *event = data;
+	Client *c = wl_container_of(listener, c, toplevel_request_minimize);
+	setfloating(c, !event->minimized);
 }
 
 void
@@ -2241,6 +2259,8 @@ setfloating(Client *c, int floating)
 	c->isfloating = floating;
 	client_set_tiled(c, floating ? 0 : WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
+	if (floating)
+		center(c, &c->mon->w);
 	arrange(c->mon);
 	printstatus();
 }
@@ -2694,6 +2714,14 @@ togglemaximize(struct wl_listener *listener, void *data)
 }
 
 void
+toggleminimize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_minimize);
+
+	setfloating(c, !c->isfloating);
+}
+
+void
 toggletag(const Arg *arg)
 {
 	unsigned int newtags;
@@ -2980,6 +3008,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 			startresize);
 	LISTEN(&xwayland_surface->events.request_maximize, &c->request_maximize,
 			togglemaximize);
+	LISTEN(&xwayland_surface->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 
 	c->toplevel_handle = wlr_foreign_toplevel_handle_v1_create(
 			foreign_toplevel_mgr);
@@ -2988,6 +3018,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 				&c->toplevel_request_activate, activatetoplevel);
 		LISTEN(&c->toplevel_handle->events.request_maximize,
 				&c->toplevel_request_maximize, maximizetoplevel);
+		LISTEN(&c->toplevel_handle->events.request_minimize,
+				&c->toplevel_request_minimize, minimizetoplevel);
 	}
 }
 
