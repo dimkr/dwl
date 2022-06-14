@@ -1798,6 +1798,12 @@ mapnotify(struct wl_listener *listener, void *data)
 	if (!c->isfloating)
 		client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 
+	if (c->toplevel_handle) {
+		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, client_get_title(c));
+		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, client_get_appid(c));
+		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, true);
+	}
+
 	c->mon->un_map = 1;
 }
 
@@ -2719,6 +2725,8 @@ toggleminimize(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, request_minimize);
 
 	setfloating(c, !c->isfloating);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, !c->isfloating);
 }
 
 void
