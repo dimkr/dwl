@@ -1476,6 +1476,7 @@ dragicondestroy(struct wl_listener *listener, void *data)
 void
 focusclient(Client *c, int lift)
 {
+	Client *other;
 	struct wlr_surface *old = seat->keyboard_state.focused_surface;
 	struct wlr_keyboard *kb;
 	int i;
@@ -1486,6 +1487,13 @@ focusclient(Client *c, int lift)
 
 	if (c && client_surface(c) == old)
 		return;
+
+	if (c) {
+		wl_list_for_each(other, &fstack, flink) {
+			if (other != c && VISIBLEON(other, c->mon) && other->toplevel_handle)
+				wlr_foreign_toplevel_handle_v1_set_activated(other->toplevel_handle, false);
+		}
+	}
 
 	/* Put the new client atop the focus stack and select its monitor */
 	if (c) {
@@ -1801,7 +1809,6 @@ mapnotify(struct wl_listener *listener, void *data)
 	if (c->toplevel_handle) {
 		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, client_get_title(c));
 		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, client_get_appid(c));
-		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, true);
 	}
 
 	c->mon->un_map = 1;
@@ -2267,8 +2274,6 @@ setfloating(Client *c, int floating)
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	if (floating)
 		center(c, &c->mon->w);
-	if (c->toplevel_handle)
-		wlr_foreign_toplevel_handle_v1_set_activated(c->toplevel_handle, floating);
 	arrange(c->mon);
 	printstatus();
 }
