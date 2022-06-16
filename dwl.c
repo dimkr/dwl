@@ -742,7 +742,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 		for (b = buttons; b < END(buttons); b++) {
 			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
-					event->button == b->button && b->func) {
+					event->button == b->button && b->func && !kiosk) {
 				b->func(&b->arg);
 				return;
 			}
@@ -1679,7 +1679,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	const Key *k;
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod) &&
-				sym == k->keysym && k->func) {
+				sym == k->keysym && k->func && (!kiosk || k->func == chvt)) {
 			k->func(&k->arg);
 			handled = 1;
 		}
