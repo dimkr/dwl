@@ -317,7 +317,9 @@ static void tile(Monitor *m);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
 static void togglemaximize(struct wl_listener *listener, void *data);
+static void togglemaximizesel(const Arg *arg);
 static void toggleminimize(struct wl_listener *listener, void *data);
+static void toggleminimizesel(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unmaplayersurface(LayerSurface *layersurface);
@@ -2274,6 +2276,8 @@ setfloating(Client *c, int floating)
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	if (floating)
 		center(c, &c->mon->w);
+	if (c->toplevel_handle)
+		wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, !c->isfloating);
 	arrange(c->mon);
 	printstatus();
 }
@@ -2727,13 +2731,27 @@ togglemaximize(struct wl_listener *listener, void *data)
 }
 
 void
+togglemaximizesel(const Arg *arg)
+{
+	Client *sel = selclient();
+	if (sel)
+		setmaximized(sel, !sel->ismaximized);
+}
+
+void
 toggleminimize(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_minimize);
 
 	setfloating(c, !c->isfloating);
-	if (c->toplevel_handle)
-		wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, !c->isfloating);
+}
+
+void
+toggleminimizesel(const Arg *arg)
+{
+	Client *sel = selclient();
+	if (sel)
+		setfloating(sel, !sel->isfloating);
 }
 
 void
