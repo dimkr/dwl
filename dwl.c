@@ -2323,8 +2323,10 @@ setlayout(const Arg *arg)
 void
 setmaximized(Client *c, int maximized)
 {
-	if (!c->isfloating || c->isfullscreen)
+	if (c->isfullscreen)
 		return;
+	if (!c->isfloating)
+		setfloating(c, 1);
 
 	c->ismaximized = maximized;
 
