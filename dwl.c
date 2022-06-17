@@ -1778,7 +1778,10 @@ run(char *startup_cmd)
 	 * instead of (0, 0) and then jumping.  still may not be fully
 	 * initialized, as the image/coordinates are not transformed for the
 	 * monitor when displayed here */
-	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
+	if (selmon)
+		wlr_cursor_warp_closest(cursor, NULL, selmon->w.x + selmon->w.width / 2, selmon->w.y + selmon->w.height / 2);
+	else
+		wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
 	wlr_xcursor_manager_set_cursor_image(cursor_mgr, cursor_image, cursor);
 
 	/* Run the Wayland event loop. This does not return until you exit the
