@@ -1763,6 +1763,7 @@ void
 mapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is mapped, or ready to display on-screen. */
+	const char *appid, *title;
 	Client *c = wl_container_of(listener, c, map);
 	int i;
 
@@ -1809,8 +1810,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
 
 	if (c->toplevel_handle) {
-		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, client_get_title(c));
-		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, client_get_appid(c));
+		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, (title = client_get_title(c)) ? title : broken);
+		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, (appid = client_get_appid(c)) ? appid : broken);
 	}
 
 	c->mon->un_map = 1;
@@ -2834,9 +2835,10 @@ unmapnotify(struct wl_listener *listener, void *data)
 void
 updateappid(struct wl_listener *listener, void *data)
 {
+	const char *appid;
 	Client *c = wl_container_of(listener, c, set_app_id);
 	if (c->toplevel_handle)
-		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, client_get_appid(c));
+		wlr_foreign_toplevel_handle_v1_set_app_id(c->toplevel_handle, (appid = client_get_appid(c)) ? appid : broken);
 }
 
 void
@@ -2880,11 +2882,12 @@ updatemons(struct wl_listener *listener, void *data)
 void
 updatetitle(struct wl_listener *listener, void *data)
 {
+	const char *title;
 	Client *c = wl_container_of(listener, c, set_title);
 	if (c == focustop(c->mon))
 		printstatus();
 	if (c->toplevel_handle)
-		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, client_get_title(c));
+		wlr_foreign_toplevel_handle_v1_set_title(c->toplevel_handle, (title = client_get_title(c)) ? title : broken);
 }
 
 void
