@@ -282,6 +282,7 @@ static void motionabsolute(struct wl_listener *listener, void *data);
 static void motionnotify(uint32_t time);
 static void motionrelative(struct wl_listener *listener, void *data);
 static void moveresize(const Arg *arg);
+static void nextstacked(const Arg *arg);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
@@ -739,7 +740,6 @@ buttonpress(struct wl_listener *listener, void *data)
 		/* Don't focus unmanaged clients */
 		if (c && !client_is_unmanaged(c))
 			focusclient(c, 1);
-
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 		for (b = buttons; b < END(buttons); b++) {
@@ -1957,6 +1957,17 @@ moveresize(const Arg *arg)
 				"bottom_right_corner", cursor);
 		break;
 	}
+}
+
+void nextstacked(const Arg *arg)
+{
+	Client *c, *next;
+	c = selclient();
+	if (!c)
+		return;
+	next = wl_container_of(c->flink.next, next, flink);
+	if (&next->flink != &fstack)
+		focusclient(next, 1);
 }
 
 void
