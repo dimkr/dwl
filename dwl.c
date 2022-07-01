@@ -271,7 +271,7 @@ static void fullscreennotify(struct wl_listener *listener, void *data);
 static void handleconstraintcommit(struct wl_listener *listener, void *data);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
-static int keybinding(uint32_t mods, xkb_keysym_t sym);
+static int keybinding(uint32_t mods, xkb_keysym_t sym, Client *);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static void killclient(const Arg *arg);
@@ -752,7 +752,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 		for (b = buttons; b < END(buttons); b++) {
 			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
-					event->button == b->button && b->func && !kiosk) {
+					event->button == b->button && b->func && (!kiosk || !c || !c->allmons || client_is_unmanaged(c))) {
 				b->func(&b->arg);
 				return;
 			}
@@ -1671,7 +1671,7 @@ inputdevice(struct wl_listener *listener, void *data)
 }
 
 int
-keybinding(uint32_t mods, xkb_keysym_t sym)
+keybinding(uint32_t mods, xkb_keysym_t sym, Client *sel)
 {
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is
@@ -1682,7 +1682,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	const Key *k;
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod) &&
-				sym == k->keysym && k->func && (!kiosk || k->func == chvt)) {
+				sym == k->keysym && k->func && (!kiosk || !sel || !sel->allmons || client_is_unmanaged(sel) || k->func == chvt)) {
 			k->func(&k->arg);
 			handled = 1;
 		}
@@ -1693,6 +1693,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 void
 keypress(struct wl_listener *listener, void *data)
 {
+	Client *sel = selclient();
 	int i;
 	/* This event is raised when a key is pressed or released. */
 	Keyboard *kb = wl_container_of(listener, kb, key);
@@ -1715,7 +1716,7 @@ keypress(struct wl_listener *listener, void *data)
 	if (!input_inhibit_mgr->active_inhibitor
 			&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
 		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, syms[i]) || handled;
+			handled = keybinding(mods, syms[i], sel) || handled;
 
 	if (!handled) {
 		/* Pass unhandled keycodes along to the client. */
