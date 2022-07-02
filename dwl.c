@@ -374,7 +374,7 @@ static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 static int kiosk = 0;
 static int floating = 0;
-static int xwayland = 0;
+static int xwaylandon = 0;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -2584,7 +2584,7 @@ setup(void)
 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
 
 #ifdef XWAYLAND
-	if (!xwayland) {
+	if (!xwaylandon) {
 		return;
 	}
 
@@ -3131,7 +3131,7 @@ main(int argc, char *argv[])
 		else if (c == 'k')
 			kiosk = 1;
 		else if (c == 'x')
-			xwayland = 1;
+			xwaylandon = 1;
 		else
 			goto usage;
 	}
