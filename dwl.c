@@ -374,6 +374,7 @@ static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 static int kiosk = 0;
 static int floating = 0;
+static int xwayland = 0;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -2420,8 +2421,6 @@ setsel(struct wl_listener *listener, void *data)
 void
 setup(void)
 {
-	const char *gdk_backend;
-
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
@@ -2585,12 +2584,9 @@ setup(void)
 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
 
 #ifdef XWAYLAND
-	/*
-	 * XWayland is started and DISPLAY is set manually if GDK_BACKEND=x11
-	 */
-	gdk_backend = getenv("GDK_BACKEND");
-	if (gdk_backend && strcmp(gdk_backend, "x11") == 0)
+	if (!xwayland) {
 		return;
+	}
 
 	/*
 	 * Initialise the XWayland X server.
@@ -3125,7 +3121,7 @@ main(int argc, char *argv[])
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hvfk")) != -1) {
+	while ((c = getopt(argc, argv, "s:hvfkx")) != -1) {
 		if (c == 's')
 			startup_cmd = optarg;
 		else if (c == 'v')
@@ -3134,6 +3130,8 @@ main(int argc, char *argv[])
 			floating = 1;
 		else if (c == 'k')
 			kiosk = 1;
+		else if (c == 'x')
+			xwayland = 1;
 		else
 			goto usage;
 	}
@@ -3149,5 +3147,5 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-f] [-k] [-s startup command]", argv[0]);
+	die("Usage: %s [-v] [-f] [-k] [-x] [-s startup command]", argv[0]);
 }
