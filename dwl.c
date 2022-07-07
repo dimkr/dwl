@@ -2348,9 +2348,9 @@ setmaximized(Client *c, int maximized)
 
 	if (maximized) {
 		c->prev = c->geom;
-		resize(c, c->mon->w.x, c->mon->w.y, c->mon->w.width, c->mon->w.height, 0);
+		resize(c, (struct wlr_box){.x = c->mon->w.x, .y = c->mon->w.y, .width = c->mon->w.width, .height = c->mon->w.height}, 0);
 	} else
-		resize(c, c->prev.x, c->prev.y, c->prev.width, c->prev.height, 0);
+		resize(c, (struct wlr_box){.x = c->prev.x, .y = c->prev.y, .width = c->prev.width, .height = c->prev.height}, 0);
 	arrange(c->mon);
 	if (c->toplevel_handle)
 		wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, maximized);
