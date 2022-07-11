@@ -1506,7 +1506,7 @@ focusclient(Client *c, int lift)
 
 	if (c) {
 		wl_list_for_each(other, &fstack, flink) {
-			if (other != c && VISIBLEON(other, c->mon) && other->toplevel_handle)
+			if (other != c && other->toplevel_handle)
 				wlr_foreign_toplevel_handle_v1_set_activated(other->toplevel_handle, false);
 		}
 	}
