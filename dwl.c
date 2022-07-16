@@ -564,22 +564,23 @@ applyrules(Client *c)
 					mon = m;
 		}
 	}
+
 	if (kiosk) {
-		c->isfullscreen = 1;
-		c->allmons = 1;
 		wl_list_for_each(oc, &clients, link) {
 			if (oc != c) {
 				c->isfloating = 1;
-				c->isfullscreen = 0;
-				c->allmons = 0;
-				center(c, &mon->w);
-				break;
+				goto floating;
 			}
 		}
-	} else if (floating) {
+		c->isfullscreen = 1;
+		c->allmons = 1;
+	} else if (floating)
 		c->isfloating = 1;
+
+floating:
+	if (c->isfloating)
 		center(c, &mon->w);
-	}
+
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
 }
