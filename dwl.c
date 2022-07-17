@@ -268,6 +268,7 @@ static int keybinding(uint32_t mods, xkb_keysym_t sym, Client *);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static void killclient(const Arg *arg);
+static void loadtheme(void);
 static void maplayersurfacenotify(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void monocle(Monitor *m);
@@ -279,6 +280,7 @@ static void nextstacked(const Arg *arg);
 static void outputmgrapply(struct wl_listener *listener, void *data);
 static void outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test);
 static void outputmgrtest(struct wl_listener *listener, void *data);
+static void parsecolor(const char *val, float color[4]);
 static void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 static void printstatus(void);
@@ -1708,6 +1710,29 @@ killclient(const Arg *arg)
 }
 
 void
+loadtheme(void)
+{
+	const char *val;
+	unsigned int tmp;
+
+	val = getenv("DWL_ROOT_COLOR");
+	if (val)
+		parsecolor(val, rootcolor);
+
+	val = getenv("DWL_BORDER_COLOR");
+	if (val)
+		parsecolor(val, bordercolor);
+
+	val = getenv("DWL_FOCUS_COLOR");
+	if (val)
+		parsecolor(val, focuscolor);
+
+	val = getenv("DWL_BORDER");
+	if (val && sscanf(val, "%u", &tmp) == 1)
+		borderpx = tmp;
+}
+
+void
 maplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *layersurface = wl_container_of(listener, layersurface, map);
@@ -1970,6 +1995,18 @@ outputmgrtest(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_configuration_v1 *config = data;
 	outputmgrapplyortest(config, 1);
+}
+
+void
+parsecolor(const char *val, float color[4])
+{
+	uint8_t r, g, b;
+	if (sscanf(val, "#%02hhx%02hhx%02hhx", &r, &g, &b) == 3) {
+		color[0] = (float)r / 0xFF;
+		color[1] = (float)g / 0xFF;
+		color[2] = (float)b / 0xFF;
+		color[3] = 0xFF;
+	}
 }
 
 void
@@ -3039,6 +3076,7 @@ main(int argc, char *argv[])
 	/* Wayland requires XDG_RUNTIME_DIR for creating its communications socket */
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
+	loadtheme();
 	setup();
 	run(startup_cmd);
 	cleanup();
