@@ -263,6 +263,7 @@ static void quitsignal(int signo);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void resize(Client *c, struct wlr_box geo, int interact);
+static void rotate(const Arg *arg);
 static void run(char *startup_cmd);
 static Client *selclient(void);
 static void setcursor(struct wl_listener *listener, void *data);
@@ -1751,6 +1752,27 @@ resize(Client *c, struct wlr_box geo, int interact)
 	/* wlroots makes this a no-op if size hasn't changed */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
 			c->geom.height - 2 * c->bw);
+}
+
+void
+rotate(const Arg *arg)
+{
+	Client *c;
+
+	if (wl_list_empty(&clients))
+		return;
+
+	if (arg->i > 0) {
+		c = wl_container_of(clients.prev, c, link);
+		wl_list_remove(&c->link);
+		wl_list_insert(&clients, &c->link);
+	} else {
+		c = wl_container_of(clients.next, c, link);
+		wl_list_remove(&c->link);
+		wl_list_insert(clients.prev, &c->link);
+	}
+
+	arrange(selmon);
 }
 
 void
