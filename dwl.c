@@ -364,7 +364,6 @@ static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
 static int kiosk = 0;
-static int floating = 0;
 static int xwaylandon = 0;
 
 static struct wlr_output_layout *output_layout;
@@ -558,8 +557,7 @@ applyrules(Client *c)
 		}
 		c->isfullscreen = 1;
 		c->allmons = 1;
-	} else if (floating)
-		c->isfloating = 1;
+	}
 
 floating:
 	if (c->isfloating)
@@ -3056,13 +3054,11 @@ main(int argc, char *argv[])
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hvfkx")) != -1) {
+	while ((c = getopt(argc, argv, "s:hvkx")) != -1) {
 		if (c == 's')
 			startup_cmd = optarg;
 		else if (c == 'v')
 			die("dwl " VERSION);
-		else if (c == 'f')
-			floating = 1;
 		else if (c == 'k')
 			kiosk = 1;
 		else if (c == 'x')
