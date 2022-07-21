@@ -2044,7 +2044,7 @@ setup(void)
 	/* Use decoration protocols to negotiate server-side decorations */
 	wlr_server_decoration_manager_set_default_mode(
 			wlr_server_decoration_manager_create(dpy),
-			WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
+			WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT);
 	wlr_xdg_decoration_manager_v1_create(dpy);
 
 	/*
