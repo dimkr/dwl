@@ -2593,7 +2593,8 @@ togglemaximize(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_maximize);
 
-	setmaximized(c, !c->ismaximized);
+	if (c->mon)
+		setmaximized(c, !c->ismaximized);
 }
 
 void
@@ -2609,7 +2610,7 @@ toggleminimize(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_minimize);
 
-	if (!client_is_unmanaged(c))
+	if (c->mon && !client_is_unmanaged(c))
 		setfloating(c, !c->isfloating);
 }
 
