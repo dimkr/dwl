@@ -24,6 +24,7 @@ all: dwl
 dwl: dwl.o util.o
 	$(CC) dwl.o util.o $(LDLIBS) $(LDFLAGS) $(DWLCFLAGS) -o $@
 dwl.o: dwl.c config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h idle-protocol.h
+dwl.o: env.c
 util.o: util.c util.h
 
 # wayland scanner rules to generate .h / .c files
