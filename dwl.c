@@ -377,6 +377,11 @@ static struct wlr_box sgeom;
 static struct wl_list mons;
 static Monitor *selmon;
 
+static const struct xkb_rule_names en_rules = {.layout = "us"};
+static struct xkb_context *en_context;
+static struct xkb_keymap *en_keymap;
+static struct xkb_state *en_state;
+
 #ifdef XWAYLAND
 static void activatex11(struct wl_listener *listener, void *data);
 static void associatex11(struct wl_listener *listener, void *data);
@@ -639,6 +644,9 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
+	xkb_state_unref(en_state);
+	xkb_keymap_unref(en_keymap);
+	xkb_context_unref(en_context);
 }
 
 void
@@ -1395,7 +1403,7 @@ keypress(struct wl_listener *listener, void *data)
 	/* Get a list of keysyms based on the keymap for this keyboard */
 	const xkb_keysym_t *syms;
 	int nsyms = xkb_state_key_get_syms(
-			kb->wlr_keyboard->xkb_state, keycode, &syms);
+			en_state, keycode, &syms);
 
 	int handled = 0;
 	uint32_t mods = wlr_keyboard_get_modifiers(kb->wlr_keyboard);
@@ -2328,6 +2336,10 @@ setup(void)
 	 * let us know when new input devices are available on the backend.
 	 */
 	wl_list_init(&keyboards);
+	en_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	en_keymap = xkb_keymap_new_from_names(en_context, &en_rules,
+		XKB_KEYMAP_COMPILE_NO_FLAGS);
+	en_state = xkb_state_new(en_keymap);
 	LISTEN_STATIC(&backend->events.new_input, inputdevice);
 	virtual_keyboard_mgr = wlr_virtual_keyboard_manager_v1_create(dpy);
 	LISTEN_STATIC(&virtual_keyboard_mgr->events.new_virtual_keyboard, virtualkeyboard);
