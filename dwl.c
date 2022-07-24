@@ -111,6 +111,10 @@ typedef struct {
 	struct wl_listener destroy;
 	struct wl_listener set_title;
 	struct wl_listener fullscreen;
+	struct wl_listener request_move;
+	struct wl_listener request_resize;
+	struct wl_listener request_maximize;
+	struct wl_listener request_minimize;
 	struct wlr_box prev;  /* layout-relative, includes border */
 #ifdef XWAYLAND
 	struct wl_listener activate;
@@ -121,6 +125,7 @@ typedef struct {
 	unsigned int tags;
 	int isfloating, isurgent, isfullscreen;
 	uint32_t resize; /* configure serial of a pending resize */
+	int ismaximized;
 } Client;
 
 typedef struct {
@@ -269,6 +274,7 @@ static void setcursor(struct wl_listener *listener, void *data);
 static void setfloating(Client *c, int floating);
 static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
+static void setmaximized(Client *c, int maximized);
 static void setmfact(const Arg *arg);
 static void setmon(Client *c, Monitor *m, unsigned int newtags);
 static void setpsel(struct wl_listener *listener, void *data);
@@ -277,11 +283,17 @@ static void setup(void);
 static void sigchld(int unused);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
+static void startmove(struct wl_listener *listener, void *data);
+static void startresize(struct wl_listener *listener, void *data);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
+static void togglemaximize(struct wl_listener *listener, void *data);
+static void togglemaximizesel(const Arg *arg);
+static void toggleminimize(struct wl_listener *listener, void *data);
+static void toggleminimizesel(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
@@ -993,6 +1005,14 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&xdg_surface->toplevel->events.set_title, &c->set_title, updatetitle);
 	LISTEN(&xdg_surface->toplevel->events.request_fullscreen, &c->fullscreen,
 			fullscreennotify);
+	LISTEN(&xdg_surface->toplevel->events.request_move, &c->request_move,
+			startmove);
+	LISTEN(&xdg_surface->toplevel->events.request_resize, &c->request_resize,
+			startresize);
+	LISTEN(&xdg_surface->toplevel->events.request_maximize, &c->request_maximize,
+			togglemaximize);
+	LISTEN(&xdg_surface->toplevel->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 }
 
 void
@@ -1086,6 +1106,10 @@ destroynotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
 	wl_list_remove(&c->fullscreen.link);
+	wl_list_remove(&c->request_move.link);
+	wl_list_remove(&c->request_resize.link);
+	wl_list_remove(&c->request_maximize.link);
+	wl_list_remove(&c->request_minimize.link);
 #ifdef XWAYLAND
 	if (c->type != XDGShell) {
 		wl_list_remove(&c->configure.link);
@@ -1545,6 +1569,8 @@ moveresize(const Arg *arg)
 
 	/* Float the window and tell motionnotify to grab it */
 	setfloating(grabc, 1);
+	if (grabc->ismaximized)
+		setmaximized(grabc, 0);
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
 		grabcx = cursor->x - grabc->geom.x;
@@ -1938,6 +1964,25 @@ setlayout(const Arg *arg)
 	printstatus();
 }
 
+void
+setmaximized(Client *c, int maximized)
+{
+	if (c->isfullscreen || client_is_unmanaged(c))
+		return;
+	if (!c->isfloating)
+		setfloating(c, 1);
+
+	c->ismaximized = maximized;
+
+	if (maximized) {
+		c->prev = c->geom;
+		resize(c, (struct wlr_box){.x = c->mon->w.x, .y = c->mon->w.y, .width = c->mon->w.width, .height = c->mon->w.height}, 0);
+	} else
+		resize(c, (struct wlr_box){.x = c->prev.x, .y = c->prev.y, .width = c->prev.width, .height = c->prev.height}, 0);
+	arrange(c->mon);
+	printstatus();
+}
+
 /* arg > 1.0 will set mfact absolutely */
 void
 setmfact(const Arg *arg)
@@ -2215,6 +2260,22 @@ startdrag(struct wl_listener *listener, void *data)
 }
 
 void
+startmove(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_move);
+
+	moveresize(&(Arg){.ui = CurMove});
+}
+
+void
+startresize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_resize);
+
+	moveresize(&(Arg){.ui = CurResize});
+}
+
+void
 tag(const Arg *arg)
 {
 	Client *sel = selclient();
@@ -2283,6 +2344,40 @@ togglefullscreen(const Arg *arg)
 	Client *sel = selclient();
 	if (sel)
 		setfullscreen(sel, !sel->isfullscreen);
+}
+
+void
+togglemaximize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_maximize);
+
+	if (c->mon)
+		setmaximized(c, !c->ismaximized);
+}
+
+void
+togglemaximizesel(const Arg *arg)
+{
+	Client *sel = selclient();
+	if (sel)
+		setmaximized(sel, !sel->ismaximized);
+}
+
+void
+toggleminimize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_minimize);
+
+	if (c->mon && !client_is_unmanaged(c))
+		setfloating(c, !c->isfloating);
+}
+
+void
+toggleminimizesel(const Arg *arg)
+{
+	Client *sel = selclient();
+	if (sel && !client_is_unmanaged(sel))
+		setfloating(sel, !sel->isfloating);
 }
 
 void
@@ -2551,6 +2646,14 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	LISTEN(&xwayland_surface->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&xwayland_surface->events.request_fullscreen, &c->fullscreen,
 			fullscreennotify);
+	LISTEN(&xwayland_surface->events.request_move, &c->request_move,
+			startmove);
+	LISTEN(&xwayland_surface->events.request_resize, &c->request_resize,
+			startresize);
+	LISTEN(&xwayland_surface->events.request_maximize, &c->request_maximize,
+			togglemaximize);
+	LISTEN(&xwayland_surface->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 }
 
 Atom
