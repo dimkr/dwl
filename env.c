@@ -190,7 +190,7 @@ parsecolor(const char *val, float color[4])
 		color[0] = (float)r / 0xFF;
 		color[1] = (float)g / 0xFF;
 		color[2] = (float)b / 0xFF;
-		color[3] = 0xFF;
+		color[3] = 1.0;
 	}
 }
 
