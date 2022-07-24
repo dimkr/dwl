@@ -1598,6 +1598,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->isfloating = 1;
 		wlr_scene_node_reparent(c->scene, layers[LyrFloat]);
 		setmon(c, p->mon, p->tags);
+		center(c, &c->mon->w);
 	} else {
 		applyrules(c);
 	}
