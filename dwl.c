@@ -2101,7 +2101,7 @@ setlayout(const Arg *arg)
 void
 setmaximized(Client *c, int maximized)
 {
-	if (c->isfullscreen)
+	if (c->isfullscreen || client_is_unmanaged(c))
 		return;
 	if (!c->isfloating)
 		setfloating(c, 1);
@@ -2609,14 +2609,15 @@ toggleminimize(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, request_minimize);
 
-	setfloating(c, !c->isfloating);
+	if (!client_is_unmanaged(c))
+		setfloating(c, !c->isfloating);
 }
 
 void
 toggleminimizesel(const Arg *arg)
 {
 	Client *sel = selclient();
-	if (sel)
+	if (sel && !client_is_unmanaged(sel))
 		setfloating(sel, !sel->isfloating);
 }
 
