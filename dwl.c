@@ -216,6 +216,7 @@ static void arrangelayer(Monitor *m, struct wl_list *list,
 static void arrangelayers(Monitor *m);
 static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
+static void center(Client *c, const struct wlr_box *box);
 static void chvt(const Arg *arg);
 static void cleanup(void);
 static void cleanupkeyboard(struct wl_listener *listener, void *data);
@@ -485,6 +486,10 @@ applyrules(Client *c)
 					mon = m;
 		}
 	}
+	if (c->isfloating) {
+		mon = xytomon(cursor->x, cursor->y);
+		center(c, &mon->w);
+	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
 }
@@ -683,6 +688,24 @@ buttonpress(struct wl_listener *listener, void *data)
 	 * pointer focus that a button press has occurred */
 	wlr_seat_pointer_notify_button(seat,
 			event->time_msec, event->button, event->state);
+}
+
+void
+center(Client *c, const struct wlr_box *box)
+{
+	c->geom.x = cursor->x - c->geom.width / 2;
+	if (c->geom.x + c->geom.width > box->x + box->width)
+		c->geom.x = box->x + box->width - c->geom.width;
+	if (c->geom.x < box->x || c->geom.width > box->width)
+		c->geom.x = box->x;
+
+	c->geom.y = cursor->y - c->geom.height / 2;
+	if (c->geom.y + c->geom.height > box->y + box->height)
+		c->geom.y = box->y + box->height - c->geom.height;
+	if (c->geom.y < box->y || c->geom.height > box->height)
+		c->geom.y = box->y;
+
+	wlr_scene_node_set_position(c->scene, c->geom.x, c->geom.y);
 }
 
 void
@@ -1438,6 +1461,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		wlr_scene_node_reparent(c->scene, layers[LyrFloat]);
 		/* TODO recheck if !p->mon is possible with wlroots 0.16.0 */
 		setmon(c, p->mon ? p->mon : selmon, p->tags);
+		center(c, &c->mon->w);
 	} else {
 		applyrules(c);
 	}
@@ -1856,6 +1880,8 @@ setfloating(Client *c, int floating)
 {
 	c->isfloating = floating;
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
+	if (floating)
+		center(c, &c->mon->w);
 	arrange(c->mon);
 	printstatus();
 }
