@@ -542,8 +542,10 @@ applyrules(Client *c)
 		} else
 			c->isfloating = 1;
 	}
-	if (c->isfloating)
+	if (c->isfloating) {
+		mon = xytomon(cursor->x, cursor->y);
 		center(c, &mon->w);
+	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
 }
