@@ -120,6 +120,7 @@ typedef struct {
 	unsigned int tags;
 	int isfloating, isurgent, isfullscreen;
 	uint32_t resize; /* configure serial of a pending resize */
+	int kiosk;
 } Client;
 
 typedef struct {
@@ -241,7 +242,7 @@ static Client *focustop(Monitor *m);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
-static int keybinding(uint32_t mods, xkb_keysym_t sym);
+static int keybinding(uint32_t mods, xkb_keysym_t sym, Client *sel);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static void killclient(const Arg *arg);
@@ -328,6 +329,7 @@ static struct wl_list keyboards;
 static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
+static int kiosk = 0;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -489,6 +491,13 @@ applyrules(Client *c)
 				if (r->monitor == i++)
 					mon = m;
 		}
+	}
+	if (kiosk) {
+		if (c->link.next == &clients && c->link.prev == &clients) {
+			c->kiosk = 1;
+			c->isfullscreen = 1;
+		} else
+			c->isfloating = 1;
 	}
 	wlr_scene_node_reparent(c->scene, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
@@ -666,7 +675,7 @@ buttonpress(struct wl_listener *listener, void *data)
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
 		for (b = buttons; b < END(buttons); b++) {
 			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
-					event->button == b->button && b->func) {
+					event->button == b->button && b->func && (!kiosk || !c || !c->kiosk || client_is_unmanaged(c))) {
 				b->func(&b->arg);
 				return;
 			}
@@ -1165,7 +1174,7 @@ focusclient(Client *c, int lift)
 	int i;
 
 	/* Raise client in stacking order if requested */
-	if (c && lift)
+	if (c && lift && (!kiosk || c->isfloating))
 		wlr_scene_node_raise_to_top(c->scene);
 
 	if (c && client_surface(c) == old)
@@ -1327,7 +1336,7 @@ inputdevice(struct wl_listener *listener, void *data)
 }
 
 int
-keybinding(uint32_t mods, xkb_keysym_t sym)
+keybinding(uint32_t mods, xkb_keysym_t sym, Client *sel)
 {
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is
@@ -1338,7 +1347,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	const Key *k;
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod) &&
-				sym == k->keysym && k->func) {
+				sym == k->keysym && k->func && (!kiosk || !sel || !sel->kiosk || client_is_unmanaged(sel) || k->func == chvt)) {
 			k->func(&k->arg);
 			handled = 1;
 		}
@@ -1349,6 +1358,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 void
 keypress(struct wl_listener *listener, void *data)
 {
+	Client *sel = selclient();
 	int i;
 	/* This event is raised when a key is pressed or released. */
 	Keyboard *kb = wl_container_of(listener, kb, key);
@@ -1371,7 +1381,7 @@ keypress(struct wl_listener *listener, void *data)
 	if (!input_inhibit_mgr->active_inhibitor
 			&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
 		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, syms[i]) || handled;
+			handled = keybinding(mods, syms[i], sel) || handled;
 
 	if (!handled) {
 		/* Pass unhandled keycodes along to the client. */
@@ -1947,6 +1957,7 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	struct wlr_box *layout_box;
 	c->isfullscreen = fullscreen;
 	if (!c->mon)
 		return;
@@ -1955,7 +1966,10 @@ setfullscreen(Client *c, int fullscreen)
 
 	if (fullscreen) {
 		c->prev = c->geom;
-		resize(c, c->mon->m, 0);
+		if (c->kiosk) {
+			layout_box = wlr_output_layout_get_box(output_layout, NULL);
+			resize(c, (struct wlr_box){.x = layout_box->x, .y = layout_box->y, .width = layout_box->width, .height = layout_box->height}, 0);
+		} else resize(c, c->mon->m, 0);
 		/* The xdg-protocol specifies:
 		 *
 		 * If the fullscreened surface is not opaque, the compositor must make
@@ -2159,7 +2173,7 @@ setup(void)
 	/* Use decoration protocols to negotiate server-side decorations */
 	wlr_server_decoration_manager_set_default_mode(
 			wlr_server_decoration_manager_create(dpy),
-			WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
+			kiosk ? WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT : WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
 	wlr_xdg_decoration_manager_v1_create(dpy);
 
 	/*
@@ -2218,6 +2232,9 @@ setup(void)
 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
 
 #ifdef XWAYLAND
+	if (kiosk)
+		return;
+
 	/*
 	 * Initialise the XWayland X server.
 	 * It will be started when the first X client is started.
@@ -2686,11 +2703,13 @@ main(int argc, char *argv[])
 	char *startup_cmd = NULL;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:hv")) != -1) {
+	while ((c = getopt(argc, argv, "s:hvk")) != -1) {
 		if (c == 's')
 			startup_cmd = optarg;
 		else if (c == 'v')
 			die("dwl " VERSION);
+		else if (c == 'k')
+			kiosk = 1;
 		else
 			goto usage;
 	}
@@ -2706,5 +2725,5 @@ main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 
 usage:
-	die("Usage: %s [-v] [-s startup command]", argv[0]);
+	die("Usage: %s [-v] [-k] [-s startup command]", argv[0]);
 }
