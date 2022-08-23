@@ -433,15 +433,17 @@ struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	struct wlr_box min = {0}, max = {0};
-	client_get_size_hints(c, &max, &min);
-	/* try to set size hints */
-	c->geom.width = MAX(min.width + (2 * c->bw), c->geom.width);
-	c->geom.height = MAX(min.height + (2 * c->bw), c->geom.height);
-	if (max.width > 0 && !(2 * c->bw > INT_MAX - max.width)) // Checks for overflow
-		c->geom.width = MIN(max.width + (2 * c->bw), c->geom.width);
-	if (max.height > 0 && !(2 * c->bw > INT_MAX - max.height)) // Checks for overflow
-		c->geom.height = MIN(max.height + (2 * c->bw), c->geom.height);
+	if (!c->isfullscreen) {
+		struct wlr_box min = {0}, max = {0};
+		client_get_size_hints(c, &max, &min);
+		/* try to set size hints */
+		c->geom.width = MAX(min.width + (2 * c->bw), c->geom.width);
+		c->geom.height = MAX(min.height + (2 * c->bw), c->geom.height);
+		if (max.width > 0 && !(2 * c->bw > INT_MAX - max.width)) // Checks for overflow
+			c->geom.width = MIN(max.width + (2 * c->bw), c->geom.width);
+		if (max.height > 0 && !(2 * c->bw > INT_MAX - max.height)) // Checks for overflow
+			c->geom.height = MIN(max.height + (2 * c->bw), c->geom.height);
+	}
 
 	if (c->geom.x >= bbox->x + bbox->width)
 		c->geom.x = bbox->x + bbox->width - c->geom.width;
@@ -976,6 +978,7 @@ createmon(struct wl_listener *listener, void *data)
 	struct wlr_output *wlr_output = data;
 	struct wlr_output_mode *preferred_mode, *mode;
 	const MonitorRule *r;
+	Client *c;
 	int max_x = 0, max_x_y = 0, width, height;
 	Monitor *om, *m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
@@ -1043,15 +1046,10 @@ createmon(struct wl_listener *listener, void *data)
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
 	wlr_output_layout_add(output_layout, wlr_output, max_x, max_x_y);
 
-	/* If length == 1 we need update selmon.
-	 * Maybe it will change in run(). */
-	if (wl_list_length(&mons) == 1) {
-		Client *c;
-		selmon = m;
-		/* If there is any client, set c->mon to this monitor */
-		wl_list_for_each(c, &clients, link)
+	/* If there are clients without monitor set this as their monitor */
+	wl_list_for_each(c, &clients, link)
+		if (!c->mon)
 			setmon(c, m, c->tags);
-	}
 }
 
 void
