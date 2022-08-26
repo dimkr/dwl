@@ -1045,11 +1045,6 @@ createmon(struct wl_listener *listener, void *data)
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
 	wlr_output_layout_add(output_layout, wlr_output, max_x, max_x_y);
-
-	/* If there are clients without monitor set this as their monitor */
-	wl_list_for_each(c, &clients, link)
-		if (!c->mon)
-			setmon(c, m, c->tags);
 }
 
 void
@@ -1353,9 +1348,11 @@ focusclient(Client *c, int lift)
 void
 focusmon(const Arg *arg)
 {
-	do
-		selmon = dirtomon(arg->i);
-	while (!selmon->wlr_output->enabled);
+	int i = 0, nmons = wl_list_length(&mons);
+	if (nmons)
+		do /* don't switch to disabled mons */
+			selmon = dirtomon(arg->i);
+		while (!selmon->wlr_output->enabled && i++ < nmons);
 	focusclient(focustop(selmon), 1);
 }
 
@@ -2736,6 +2733,7 @@ updatemons(struct wl_listener *listener, void *data)
 	 */
 	struct wlr_output_configuration_v1 *config =
 		wlr_output_configuration_v1_create();
+	Client *c;
 	Monitor *m;
 	sgeom = *wlr_output_layout_get_box(output_layout, NULL);
 	wlr_scene_rect_set_size(root, sgeom.width, sgeom.height);
@@ -2759,6 +2757,11 @@ updatemons(struct wl_listener *listener, void *data)
 		config_head->state.x = m->m.x;
 		config_head->state.y = m->m.y;
 	}
+
+	if (selmon && selmon->wlr_output->enabled)
+		wl_list_for_each(c, &clients, link)
+			if (!c->mon && client_is_mapped(c))
+				setmon(c, selmon, c->tags);
 
 	wlr_output_manager_v1_set_configuration(output_mgr, config);
 }
