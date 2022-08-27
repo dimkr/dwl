@@ -993,8 +993,22 @@ createmon(struct wl_listener *listener, void *data)
 		if (!r->name || strstr(wlr_output->name, r->name)) {
 			m->mfact = r->mfact;
 			m->nmaster = r->nmaster;
+			if (r->scale > 0)
+				wlr_output_set_scale(wlr_output, r->scale);
+			else {
+				struct wlr_output_mode *mode = wlr_output_preferred_mode(wlr_output);
+				float ppi = mode ? mode->width / (wlr_output->phys_width / 25.4) : 96;
+				if (ppi >= 96 * 2)
+					wlr_output_set_scale(wlr_output, 2);
+				else if (ppi >= 96 * 1.5)
+					wlr_output_set_scale(wlr_output, 1.5);
+				else if (ppi >= 96 * 1.25 && mode->width >= 1920)
+					wlr_output_set_scale(wlr_output, 1.25);
+				else
+					wlr_output_set_scale(wlr_output, 1);
+			}
 			wlr_output_set_scale(wlr_output, r->scale);
-			wlr_xcursor_manager_load(cursor_mgr, r->scale);
+			wlr_xcursor_manager_load(cursor_mgr, wlr_output->scale);
 			m->lt[0] = m->lt[1] = r->lt;
 			wlr_output_set_transform(wlr_output, r->rr);
 			break;
