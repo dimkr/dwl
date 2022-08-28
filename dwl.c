@@ -1007,7 +1007,6 @@ createmon(struct wl_listener *listener, void *data)
 				else
 					wlr_output_set_scale(wlr_output, 1);
 			}
-			wlr_output_set_scale(wlr_output, r->scale);
 			wlr_xcursor_manager_load(cursor_mgr, wlr_output->scale);
 			m->lt[0] = m->lt[1] = r->lt;
 			wlr_output_set_transform(wlr_output, r->rr);
