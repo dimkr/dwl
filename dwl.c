@@ -1,7 +1,6 @@
 /*
  * See LICENSE file for copyright and license details.
  */
-#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <getopt.h>
 #include <libinput.h>
@@ -236,6 +235,7 @@ static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
 static void center(Client *c, const struct wlr_box *box);
 static void chvt(const Arg *arg);
+static void checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
 static void cleanupkeyboard(struct wl_listener *listener, void *data);
 static void cleanupmon(struct wl_listener *listener, void *data);
@@ -331,7 +331,7 @@ static void zoom(const Arg *arg);
 /* variables */
 static const char broken[] = "broken";
 static pid_t child_pid = -1;
-static struct wlr_surface *exclusive_focus;
+static void *exclusive_focus;
 static struct wl_display *dpy;
 static struct wlr_backend *backend;
 static struct wlr_scene *scene;
@@ -556,9 +556,10 @@ arrange(Monitor *m)
 {
 	Client *c;
 	wl_list_for_each(c, &clients, link)
-		wlr_scene_node_set_enabled(c->scene, VISIBLEON(c, c->mon));
+		if (c->mon == m)
+			wlr_scene_node_set_enabled(c->scene, VISIBLEON(c, m));
 
-	if (m->lt[m->sellt]->arrange)
+	if (m && m->lt[m->sellt]->arrange)
 		m->lt[m->sellt]->arrange(m);
 	motionnotify(0);
 }
@@ -582,7 +583,7 @@ arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int 
 		const uint32_t both_vert = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP
 			| ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
 
-		if (exclusive != (state->exclusive_zone > 0))
+		if (wlr_layer_surface->mapped && exclusive != (state->exclusive_zone > 0))
 			continue;
 
 		bounds = state->exclusive_zone == -1 ? full_area : *usable_area;
@@ -651,7 +652,8 @@ arrangelayers(Monitor *m)
 		ZWLR_LAYER_SHELL_V1_LAYER_TOP,
 	};
 	LayerSurface *layersurface;
-	struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
+	if (!m || !m->wlr_output->enabled)
+		return;
 
 	/* Arrange exclusive surfaces from top->bottom */
 	for (i = 3; i >= 0; i--)
@@ -674,12 +676,8 @@ arrangelayers(Monitor *m)
 					layersurface->layer_surface->mapped) {
 				/* Deactivate the focused client. */
 				focusclient(NULL, 0);
-				exclusive_focus = layersurface->layer_surface->surface;
-				if (kb)
-					wlr_seat_keyboard_notify_enter(seat, exclusive_focus,
-							kb->keycodes, kb->num_keycodes, &kb->modifiers);
-				else
-					wlr_seat_keyboard_notify_enter(seat, exclusive_focus, NULL, 0, NULL);
+				exclusive_focus = layersurface;
+				client_notify_enter(layersurface->layer_surface->surface, wlr_seat_get_keyboard(seat));
 				return;
 			}
 		}
@@ -771,6 +769,25 @@ chvt(const Arg *arg)
 }
 
 void
+checkidleinhibitor(struct wlr_surface *exclude)
+{
+	Client *c, *w;
+	int inhibited = 0;
+	struct wlr_idle_inhibitor_v1 *inhibitor;
+	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		c = client_from_wlr_surface(inhibitor->surface);
+		if (exclude && (!(w = client_from_wlr_surface(exclude)) || w == c))
+			continue;
+		if (!c || VISIBLEON(c, c->mon)) {
+			inhibited = 1;
+			break;
+		}
+	}
+
+	wlr_idle_set_enabled(idle, NULL, !inhibited);
+}
+
+void
 cleanup(void)
 {
 #ifdef XWAYLAND
@@ -815,6 +832,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 	wl_list_remove(&m->destroy.link);
 	wl_list_remove(&m->frame.link);
 	wl_list_remove(&m->link);
+	wlr_output->data = NULL;
 	wlr_output_layout_remove(output_layout, m->wlr_output);
 	wlr_scene_output_destroy(m->scene_output);
 
@@ -854,20 +872,19 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (!wlr_output || !(layersurface->mon = wlr_output->data))
 		return;
 
-	wlr_scene_node_reparent(layersurface->scene,
-			layers[wlr_layer_surface->current.layer]);
+	if (layers[wlr_layer_surface->current.layer] != layersurface->scene->parent) {
+		wlr_scene_node_reparent(layersurface->scene,
+				layers[wlr_layer_surface->current.layer]);
+		wl_list_remove(&layersurface->link);
+		wl_list_insert(&layersurface->mon->layers[wlr_layer_surface->current.layer],
+				&layersurface->link);
+	}
 
 	if (wlr_layer_surface->current.committed == 0
 			&& layersurface->mapped == wlr_layer_surface->mapped)
 		return;
-
 	layersurface->mapped = wlr_layer_surface->mapped;
 
-	if (layers[wlr_layer_surface->current.layer] != layersurface->scene) {
-		wl_list_remove(&layersurface->link);
-		wl_list_insert(&layersurface->mon->layers[wlr_layer_surface->current.layer],
-			&layersurface->link);
-	}
 	arrangelayers(layersurface->mon);
 }
 
@@ -895,7 +912,7 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	wl_signal_add(&idle_inhibitor->events.destroy, &idle_inhibitor_destroy);
 
-	wlr_idle_set_enabled(idle, seat, 0);
+	checkidleinhibitor(NULL);
 }
 
 void
@@ -934,14 +951,13 @@ createlayersurface(struct wl_listener *listener, void *data)
 	LayerSurface *layersurface;
 	struct wlr_layer_surface_v1_state old_state;
 
-	if (!wlr_layer_surface->output) {
+	if (!wlr_layer_surface->output)
 		wlr_layer_surface->output = selmon->wlr_output;
-	}
 
 	layersurface = ecalloc(1, sizeof(LayerSurface));
 	layersurface->type = LayerShell;
 	LISTEN(&wlr_layer_surface->surface->events.commit,
-		&layersurface->surface_commit, commitlayersurfacenotify);
+			&layersurface->surface_commit, commitlayersurfacenotify);
 	LISTEN(&wlr_layer_surface->events.destroy, &layersurface->destroy,
 			destroylayersurfacenotify);
 	LISTEN(&wlr_layer_surface->events.map, &layersurface->map,
@@ -950,8 +966,8 @@ createlayersurface(struct wl_listener *listener, void *data)
 			unmaplayersurfacenotify);
 
 	layersurface->layer_surface = wlr_layer_surface;
-	wlr_layer_surface->data = layersurface;
 	layersurface->mon = wlr_layer_surface->output->data;
+	wlr_layer_surface->data = layersurface;
 
 	layersurface->scene = wlr_layer_surface->surface->data =
 			wlr_scene_subsurface_tree_create(layers[wlr_layer_surface->pending.layer],
@@ -1210,9 +1226,9 @@ cursorframe(struct wl_listener *listener, void *data)
 void
 destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
-	/* I've been testing and at this point the inhibitor has not yet been
-	 * removed from the list, checking if it has at least one item. */
-	wlr_idle_set_enabled(idle, seat, wl_list_length(&idle_inhibit_mgr->inhibitors) <= 1);
+	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
+	 * at this point the idle inhibitor is still in the list of the manager */
+	checkidleinhibitor(data);
 }
 
 void
@@ -1226,11 +1242,6 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&layersurface->unmap.link);
 	wl_list_remove(&layersurface->surface_commit.link);
 	wlr_scene_node_destroy(layersurface->scene);
-	if (layersurface->layer_surface->output) {
-		if ((layersurface->mon = layersurface->layer_surface->output->data))
-			arrangelayers(layersurface->mon);
-		layersurface->layer_surface->output = NULL;
-	}
 	free(layersurface);
 }
 
@@ -1286,7 +1297,6 @@ void
 focusclient(Client *c, int lift)
 {
 	struct wlr_surface *old = seat->keyboard_state.focused_surface;
-	struct wlr_keyboard *kb;
 	int i;
 	/* Do not focus clients if a layer surface is focused */
 	if (exclusive_focus)
@@ -1338,7 +1348,7 @@ focusclient(Client *c, int lift)
 	}
 
 	printstatus();
-	wlr_idle_set_enabled(idle, seat, wl_list_empty(&idle_inhibit_mgr->inhibitors));
+	checkidleinhibitor(NULL);
 
 	if (!c) {
 		/* With no client, all we have left is to clear focus */
@@ -1347,12 +1357,7 @@ focusclient(Client *c, int lift)
 	}
 
 	/* Have a client, so focus its top-level wlr_surface */
-	kb = wlr_seat_get_keyboard(seat);
-	if (kb)
-		wlr_seat_keyboard_notify_enter(seat, client_surface(c),
-				kb->keycodes, kb->num_keycodes, &kb->modifiers);
-	else
-		wlr_seat_keyboard_notify_enter(seat, client_surface(c), NULL, 0, NULL);
+	client_notify_enter(client_surface(c), wlr_seat_get_keyboard(seat));
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
@@ -1409,14 +1414,7 @@ void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, fullscreen);
-	int fullscreen = client_wants_fullscreen(c);
-
-	if (!c->mon) {
-		/* if the client is not mapped yet, let mapnotify() call setfullscreen() */
-		c->isfullscreen = fullscreen;
-		return;
-	}
-	setfullscreen(c, fullscreen);
+	setfullscreen(c, client_wants_fullscreen(c));
 }
 
 void
@@ -1547,10 +1545,8 @@ killclient(const Arg *arg)
 void
 maplayersurfacenotify(struct wl_listener *listener, void *data)
 {
-	LayerSurface *layersurface = wl_container_of(listener, layersurface, map);
-	layersurface->mon = layersurface->layer_surface->output->data;
-	wlr_surface_send_enter(layersurface->layer_surface->surface,
-		layersurface->mon->wlr_output);
+	LayerSurface *l = wl_container_of(listener, l, map);
+	wlr_surface_send_enter(l->layer_surface->surface, l->mon->wlr_output);
 	motionnotify(0);
 }
 
@@ -1613,9 +1609,6 @@ mapnotify(struct wl_listener *listener, void *data)
 		applyrules(c);
 	}
 	printstatus();
-
-	if (c->isfullscreen)
-		setfullscreen(c, 1);
 
 	c->mon->un_map = 1;
 }
@@ -1984,6 +1977,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
 	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+	if (c->fullscreen_bg)
+		wlr_scene_rect_set_size(c->fullscreen_bg, c->geom.width, c->geom.height);
 
 	/* wlroots makes this a no-op if size hasn't changed */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
@@ -2091,6 +2086,8 @@ setfullscreen(Client *c, int fullscreen)
 {
 	struct wlr_box *layout_box;
 	c->isfullscreen = fullscreen;
+	if (!c->mon)
+		return;
 	c->bw = fullscreen ? 0 : borderpx;
 	client_set_fullscreen(c, fullscreen);
 
@@ -2181,6 +2178,7 @@ setmon(Client *c, Monitor *m, unsigned int newtags)
 	if (oldmon == m)
 		return;
 	c->mon = m;
+	c->prev = c->geom;
 
 	/* TODO leave/enter is not optimal but works */
 	if (oldmon) {
@@ -2192,7 +2190,7 @@ setmon(Client *c, Monitor *m, unsigned int newtags)
 		resize(c, c->geom, 0);
 		wlr_surface_send_enter(client_surface(c), m->wlr_output);
 		c->tags = newtags ? newtags : m->tagset[m->seltags]; /* assign tags of target monitor */
-		arrange(m);
+		setfullscreen(c, c->isfullscreen); /* This will call arrange(c->mon) */
 	}
 	focusclient(focustop(selmon), 1);
 }
@@ -2700,7 +2698,10 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 	layersurface->layer_surface->mapped = (layersurface->mapped = 0);
 	wlr_scene_node_set_enabled(layersurface->scene, 0);
-	if (layersurface->layer_surface->surface == exclusive_focus)
+	if (layersurface->layer_surface->output
+			&& (layersurface->mon = layersurface->layer_surface->output->data))
+		arrangelayers(layersurface->mon);
+	if (layersurface == exclusive_focus)
 		exclusive_focus = NULL;
 	if (layersurface->layer_surface->surface ==
 			seat->keyboard_state.focused_surface)
