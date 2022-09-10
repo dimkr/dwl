@@ -191,7 +191,7 @@ struct Monitor {
 	unsigned int seltags;
 	unsigned int sellt;
 	unsigned int tagset[2];
-	double mfact;
+	double mfacts[512];
 	int nmaster;
 	int un_map; /* If a map/unmap happened on this monitor, then this should be true */
 };
@@ -996,6 +996,7 @@ createmon(struct wl_listener *listener, void *data)
 	const MonitorRule *r;
 	Client *c;
 	int max_x = 0, max_x_y = 0, width, height;
+	unsigned int i;
 	Monitor *om, *m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
 
@@ -1007,7 +1008,8 @@ createmon(struct wl_listener *listener, void *data)
 	m->tagset[0] = m->tagset[1] = 1;
 	for (r = monrules; r < END(monrules); r++) {
 		if (!r->name || strstr(wlr_output->name, r->name)) {
-			m->mfact = r->mfact;
+			for (i = 0; i < LENGTH(m->mfacts); ++i)
+				m->mfacts[i] = r->mfact;
 			m->nmaster = r->nmaster;
 			if (r->scale > 0)
 				wlr_output_set_scale(wlr_output, r->scale);
@@ -2163,10 +2165,10 @@ setmfact(const Arg *arg)
 
 	if (!arg || !selmon->lt[selmon->sellt]->arrange)
 		return;
-	f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
+	f = arg->f < 1.0 ? arg->f + selmon->mfacts[selmon->tagset[selmon->seltags]] : arg->f - 1.0;
 	if (f < 0.1 || f > 0.9)
 		return;
-	selmon->mfact = f;
+	selmon->mfacts[selmon->tagset[selmon->seltags]] = f;
 	arrange(selmon);
 }
 
@@ -2438,7 +2440,7 @@ snail(Monitor *m)
 		return;
 
 	if (n > m->nmaster)
-		mw = m->nmaster ? m->w.width * m->mfact : 0;
+		mw = m->nmaster ? m->w.width * m->mfacts[m->tagset[m->seltags]] : 0;
 
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
@@ -2591,7 +2593,7 @@ tile(Monitor *m)
 		return;
 
 	if (n > m->nmaster)
-		mw = m->nmaster ? m->w.width * m->mfact : 0;
+		mw = m->nmaster ? m->w.width * m->mfacts[m->tagset[m->seltags]] : 0;
 	else
 		mw = m->w.width;
 	i = my = ty = 0;
