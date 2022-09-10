@@ -985,7 +985,8 @@ createmon(struct wl_listener *listener, void *data)
 	struct wlr_output_mode *preferred_mode, *mode;
 	const MonitorRule *r;
 	Client *c;
-	Monitor *m = wlr_output->data = ecalloc(1, sizeof(*m));
+	int max_x = 0, max_x_y = 0, width, height;
+	Monitor *om, *m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
 
 	wlr_output_init_render(wlr_output, alloc, drw);
@@ -1031,6 +1032,14 @@ createmon(struct wl_listener *listener, void *data)
 	if (!wlr_output_commit(wlr_output))
 		return;
 
+	wl_list_for_each(om, &mons, link) {
+		wlr_output_effective_resolution(om->wlr_output, &width, &height);
+		if (om->m.x + width > max_x) {
+			max_x = om->m.x + width;
+			max_x_y = om->m.y;
+		}
+	}
+
 	wl_list_insert(&mons, &m->link);
 	printstatus();
 
@@ -1041,7 +1050,7 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
-	wlr_output_layout_add_auto(output_layout, wlr_output);
+	wlr_output_layout_add(output_layout, wlr_output, max_x, max_x_y);
 }
 
 void
