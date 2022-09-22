@@ -461,6 +461,7 @@ applyexclusive(struct wlr_box *usable_area,
 		uint32_t anchor, int32_t exclusive,
 		int32_t margin_top, int32_t margin_right,
 		int32_t margin_bottom, int32_t margin_left) {
+	size_t i;
 	Edge edges[] = {
 		{ /* Top */
 			.singular_anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP,
@@ -499,7 +500,7 @@ applyexclusive(struct wlr_box *usable_area,
 			.margin = margin_right,
 		}
 	};
-	for (size_t i = 0; i < LENGTH(edges); i++) {
+	for (i = 0; i < LENGTH(edges); i++) {
 		if ((anchor == edges[i].singular_anchor || anchor == edges[i].anchor_triplet)
 				&& exclusive + edges[i].margin > 0) {
 			if (edges[i].positive_axis)
@@ -655,7 +656,7 @@ arrangelayers(Monitor *m)
 		ZWLR_LAYER_SHELL_V1_LAYER_TOP,
 	};
 	LayerSurface *layersurface;
-	if (!m || !m->wlr_output->enabled)
+	if (!m->wlr_output->enabled)
 		return;
 
 	/* Arrange exclusive surfaces from top->bottom */
@@ -672,11 +673,11 @@ arrangelayers(Monitor *m)
 		arrangelayer(m, &m->layers[i], &usable_area, 0);
 
 	/* Find topmost keyboard interactive layer, if such a layer exists */
-	for (size_t i = 0; i < LENGTH(layers_above_shell); i++) {
+	for (i = 0; i < LENGTH(layers_above_shell); i++) {
 		wl_list_for_each_reverse(layersurface,
 				&m->layers[layers_above_shell[i]], link) {
 			if (layersurface->layer_surface->current.keyboard_interactive &&
-					layersurface->layer_surface->mapped) {
+					layersurface->mapped) {
 				/* Deactivate the focused client. */
 				focusclient(NULL, 0);
 				exclusive_focus = layersurface;
@@ -1002,7 +1003,7 @@ createmon(struct wl_listener *listener, void *data)
 	struct wlr_output *wlr_output = data;
 	struct wlr_output_mode *preferred_mode, *mode;
 	const MonitorRule *r;
-	Client *c;
+	size_t i;
 	int max_x = 0, max_x_y = 0, width, height;
 	Monitor *om, *m = wlr_output->data = ecalloc(1, sizeof(*m));
 	m->wlr_output = wlr_output;
@@ -1010,7 +1011,7 @@ createmon(struct wl_listener *listener, void *data)
 	wlr_output_init_render(wlr_output, alloc, drw);
 
 	/* Initialize monitor state using configured rules */
-	for (size_t i = 0; i < LENGTH(m->layers); i++)
+	for (i = 0; i < LENGTH(m->layers); i++)
 		wl_list_init(&m->layers[i]);
 	m->tagset[0] = m->tagset[1] = 1;
 	for (r = monrules; r < END(monrules); r++) {
@@ -1313,9 +1314,6 @@ focusclient(Client *c, int lift)
 {
 	struct wlr_surface *old = seat->keyboard_state.focused_surface;
 	int i;
-	/* Do not focus clients if a layer surface is focused */
-	if (exclusive_focus)
-		return;
 
 	/* Raise client in stacking order if requested */
 	if (c && lift && (!kiosk || c->isfloating))
@@ -1332,8 +1330,11 @@ focusclient(Client *c, int lift)
 		c->isurgent = 0;
 		client_restack_surface(c);
 
-		for (i = 0; i < 4; i++)
-			wlr_scene_rect_set_color(c->border[i], focuscolor);
+		/* Don't change border color if there is a exclusive focus
+		 * (at this moment it means that a layer surface is focused) */
+		if (!exclusive_focus)
+			for (i = 0; i < 4; i++)
+				wlr_scene_rect_set_color(c->border[i], focuscolor);
 	}
 
 	/* Deactivate old client if focus is changing */
@@ -1345,10 +1346,9 @@ focusclient(Client *c, int lift)
 			struct wlr_layer_surface_v1 *wlr_layer_surface =
 				wlr_layer_surface_v1_from_wlr_surface(old);
 
-			if (wlr_layer_surface->mapped && (
-						wlr_layer_surface->current.layer == ZWLR_LAYER_SHELL_V1_LAYER_TOP ||
-						wlr_layer_surface->current.layer == ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY
-						))
+			if (wlr_layer_surface && ((LayerSurface *)wlr_layer_surface->data)->mapped
+					&& (wlr_layer_surface->current.layer == ZWLR_LAYER_SHELL_V1_LAYER_TOP
+					|| wlr_layer_surface->current.layer == ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY))
 				return;
 		} else {
 			Client *w;
@@ -2723,11 +2723,11 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 	layersurface->mapped = 0;
 	wlr_scene_node_set_enabled(layersurface->scene, 0);
+	if (layersurface == exclusive_focus)
+		exclusive_focus = NULL;
 	if (layersurface->layer_surface->output
 			&& (layersurface->mon = layersurface->layer_surface->output->data))
 		arrangelayers(layersurface->mon);
-	if (layersurface == exclusive_focus)
-		exclusive_focus = NULL;
 	if (layersurface->layer_surface->surface ==
 			seat->keyboard_state.focused_surface)
 		focusclient(selclient(), 1);
@@ -2747,14 +2747,14 @@ unmapnotify(struct wl_listener *listener, void *data)
 	if (c->mon)
 		c->mon->un_map = 1;
 
-	if (client_is_unmanaged(c)) {
-		wlr_scene_node_destroy(c->scene);
-		return;
-	}
+	if (client_is_unmanaged(c))
+		goto end;
 
 	wl_list_remove(&c->link);
 	setmon(c, NULL, 0);
 	wl_list_remove(&c->flink);
+
+end:
 	wl_list_remove(&c->commit.link);
 	wlr_scene_node_destroy(c->scene);
 	printstatus();
