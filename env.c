@@ -10,7 +10,6 @@ setclickmethod(struct libinput_device *libinput_device)
 	const char *val;
 	long l;
 	char *end = NULL;
-	enum libinput_config_click_method method = LIBINPUT_CONFIG_CLICK_METHOD_NONE;
 
 	val = getenv("LIBINPUT_DEFAULT_CLICK_METHOD");
 	if (!val || !val[0])
@@ -29,7 +28,6 @@ static void
 settap(struct libinput_device *libinput_device)
 {
 	const char *val;
-	enum libinput_config_tap_state state = LIBINPUT_CONFIG_TAP_DISABLED;
 
 	val = getenv("LIBINPUT_DEFAULT_TAP");
 	if (val) {
@@ -60,7 +58,6 @@ static void
 setnaturalscroll(struct libinput_device *libinput_device)
 {
 	const char *val;
-	enum libinput_config_status status;
 
 	val = getenv("LIBINPUT_DEFAULT_NATURAL_SCROLL");
 	if (val && val[0])
@@ -77,7 +74,6 @@ setaccelprofile(struct libinput_device *libinput_device)
 	const char *val;
 	double profile;
 	char *end = NULL;
-	enum libinput_config_status status;
 
 	val = getenv("LIBINPUT_DEFAULT_ACCELERATION_PROFILE");
 	if (!val || !val[0])
@@ -117,7 +113,6 @@ setscrollmethod(struct libinput_device *libinput_device)
 	const char *val;
 	long l;
 	char *end = NULL;
-	enum libinput_config_status status;
 
 	val = getenv("LIBINPUT_DEFAULT_SCROLL_METHOD");
 	if (!val || !val[0])
