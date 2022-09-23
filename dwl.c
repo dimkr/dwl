@@ -1022,7 +1022,7 @@ createmon(struct wl_listener *listener, void *data)
 				wlr_output_set_scale(wlr_output, r->scale);
 			else {
 				struct wlr_output_mode *native = wlr_output_preferred_mode(wlr_output);
-				float ppi = (native && native->height >= 1080 && wlr_output->phys_width > 0 && !kiosk) ? native->width / (wlr_output->phys_width / 25.4) : 96;
+				float ppi = (native && native->height >= 1080 && wlr_output->phys_width > 0) ? native->width / (wlr_output->phys_width / 25.4) : 96;
 				if (ppi >= 96 * 2)
 					wlr_output_set_scale(wlr_output, 2);
 				else if (ppi >= 96 * 1.5)
