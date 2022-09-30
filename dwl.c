@@ -330,6 +330,7 @@ static void zoom(const Arg *arg);
 
 /* variables */
 static const char broken[] = "broken";
+static const char *cursor_image = "left_ptr";
 static pid_t child_pid = -1;
 static void *exclusive_focus;
 static struct wl_display *dpy;
@@ -733,10 +734,13 @@ buttonpress(struct wl_listener *listener, void *data)
 		break;
 	case WLR_BUTTON_RELEASED:
 		/* If you released any buttons, we exit interactive move/resize mode. */
-		/* TODO should reset to the pointer focus's current setcursor */
 		if (cursor_mode != CurNormal) {
-			wlr_xcursor_manager_set_cursor_image(cursor_mgr, "left_ptr", cursor);
 			cursor_mode = CurNormal;
+			/* Clear the pointer focus, this way if the cursor is over a surface
+			 * we will send an enter event after which the client will provide us
+			 * a cursor surface */
+			wlr_seat_pointer_clear_focus(seat);
+			motionnotify(0);
 			/* Drop the window off on its new monitor */
 			selmon = xytomon(cursor->x, cursor->y);
 			setmon(grabc, selmon, 0);
@@ -807,6 +811,8 @@ cleanup(void)
 		waitpid(child_pid, NULL, 0);
 	}
 	wlr_backend_destroy(backend);
+	wlr_renderer_destroy(drw);
+	wlr_allocator_destroy(alloc);
 	wlr_xcursor_manager_destroy(cursor_mgr);
 	wlr_cursor_destroy(cursor);
 	wlr_output_layout_destroy(output_layout);
@@ -960,7 +966,10 @@ createlayersurface(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1_state old_state;
 
 	if (!wlr_layer_surface->output)
-		wlr_layer_surface->output = selmon->wlr_output;
+		wlr_layer_surface->output = selmon ? selmon->wlr_output : NULL;
+
+	if (!wlr_layer_surface->output)
+		wlr_layer_surface_v1_destroy(wlr_layer_surface);
 
 	layersurface = ecalloc(1, sizeof(LayerSurface));
 	layersurface->type = LayerShell;
@@ -1369,6 +1378,9 @@ focusclient(Client *c, int lift)
 		return;
 	}
 
+	/* Change cursor surface */
+	motionnotify(0);
+
 	/* Have a client, so focus its top-level wlr_surface */
 	client_notify_enter(client_surface(c), wlr_seat_get_keyboard(seat));
 
@@ -1442,6 +1454,8 @@ handleconstraintcommit(struct wl_listener *listener, void *data)
 void
 incnmaster(const Arg *arg)
 {
+	if (!arg || !selmon)
+		return;
 	selmon->nmaster = MAX(selmon->nmaster + arg->i, 0);
 	arrange(selmon);
 }
@@ -1699,8 +1713,8 @@ motionnotify(uint32_t time)
 	/* If there's no client surface under the cursor, set the cursor image to a
 	 * default. This is what makes the cursor image appear when you move it
 	 * off of a client or over its border. */
-	if (!surface && time)
-		wlr_xcursor_manager_set_cursor_image(cursor_mgr, "left_ptr", cursor);
+	if (!surface && (!cursor_image || strcmp(cursor_image, "left_ptr")))
+		wlr_xcursor_manager_set_cursor_image(cursor_mgr, (cursor_image = "left_ptr"), cursor);
 
 	pointerfocus(c, surface, sx, sy, time);
 }
@@ -1745,7 +1759,7 @@ moveresize(const Arg *arg)
 	case CurMove:
 		grabcx = cursor->x - grabc->geom.x;
 		grabcy = cursor->y - grabc->geom.y;
-		wlr_xcursor_manager_set_cursor_image(cursor_mgr, "fleur", cursor);
+		wlr_xcursor_manager_set_cursor_image(cursor_mgr, (cursor_image = "fleur"), cursor);
 		break;
 	case CurResize:
 		/* Doesn't work for X11 output - the next absolute motion event
@@ -1754,7 +1768,7 @@ moveresize(const Arg *arg)
 				grabc->geom.x + grabc->geom.width,
 				grabc->geom.y + grabc->geom.height);
 		wlr_xcursor_manager_set_cursor_image(cursor_mgr,
-				"bottom_right_corner", cursor);
+				(cursor_image = "bottom_right_corner"), cursor);
 		break;
 	}
 }
@@ -1880,7 +1894,6 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * wlroots makes this a no-op if surface is already focused */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
-
 }
 
 void
@@ -2058,7 +2071,7 @@ run(char *startup_cmd)
 		wlr_cursor_warp_closest(cursor, NULL, selmon->w.x + selmon->w.width / 2, selmon->w.y + selmon->w.height / 2);
 	else
 		wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
-	wlr_xcursor_manager_set_cursor_image(cursor_mgr, "left_ptr", cursor);
+	wlr_xcursor_manager_set_cursor_image(cursor_mgr, cursor_image, cursor);
 
 	/* Run the Wayland event loop. This does not return until you exit the
 	 * compositor. Starting the backend rigged up all of the necessary event
@@ -2081,10 +2094,12 @@ setcursor(struct wl_listener *listener, void *data)
 {
 	/* This event is raised by the seat when a client provides a cursor image */
 	struct wlr_seat_pointer_request_set_cursor_event *event = data;
-	/* If we're "grabbing" the cursor, don't use the client's image */
-	/* TODO still need to save the provided surface to restore later */
+	/* If we're "grabbing" the cursor, don't use the client's image, we will
+	 * restore it after "grabbing" sending a leave event, followed by a enter
+	 * event, which will result in the client requesting set the cursor surface */
 	if (cursor_mode != CurNormal)
 		return;
+	cursor_image = NULL;
 	/* This can be sent by any client, so we check to make sure this one is
 	 * actually has pointer focus first. If so, we can tell the cursor to
 	 * use the provided surface as the cursor image. It will set the
@@ -2152,6 +2167,8 @@ setfullscreen(Client *c, int fullscreen)
 void
 setlayout(const Arg *arg)
 {
+	if (!selmon)
+		return;
 	if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt])
 		selmon->sellt ^= 1;
 	if (arg && arg->v)
@@ -2186,7 +2203,7 @@ setmfact(const Arg *arg)
 {
 	float f;
 
-	if (!arg || !selmon->lt[selmon->sellt]->arrange)
+	if (!arg || !selmon || !selmon->lt[selmon->sellt]->arrange)
 		return;
 	f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
 	if (f < 0.1 || f > 0.9)
@@ -2598,9 +2615,8 @@ void
 tagmon(const Arg *arg)
 {
 	Client *sel = selclient();
-	if (!sel)
-		return;
-	setmon(sel, dirtomon(arg->i), 0);
+	if (sel)
+		setmon(sel, dirtomon(arg->i), 0);
 }
 
 void
@@ -2706,7 +2722,7 @@ toggletag(const Arg *arg)
 void
 toggleview(const Arg *arg)
 {
-	unsigned int newtagset = selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK);
+	unsigned int newtagset = selmon ? selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK) : 0;
 
 	if (newtagset) {
 		selmon->tagset[selmon->seltags] = newtagset;
@@ -2758,6 +2774,7 @@ end:
 	wl_list_remove(&c->commit.link);
 	wlr_scene_node_destroy(c->scene);
 	printstatus();
+	motionnotify(0);
 }
 
 void
@@ -2827,7 +2844,7 @@ urgent(struct wl_listener *listener, void *data)
 void
 view(const Arg *arg)
 {
-	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
+	if (!selmon || (arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
@@ -2889,7 +2906,7 @@ zoom(const Arg *arg)
 {
 	Client *c, *sel = selclient();
 
-	if (!sel || !selmon->lt[selmon->sellt]->arrange || sel->isfloating)
+	if (!sel || !selmon || !selmon->lt[selmon->sellt]->arrange || sel->isfloating)
 		return;
 
 	/* Search for the first tiled window that is not sel, marking sel as
