@@ -1713,7 +1713,7 @@ motionnotify(uint32_t time)
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, NULL, &sx, &sy);
 
-	if (cursor_mode == CurPressed) {
+	if (cursor_mode == CurPressed && !seat->drag) {
 		surface = seat->pointer_state.focused_surface;
 		c = client_from_wlr_surface(surface);
 		sx = c ? cursor->x - c->geom.x : 0;
@@ -1723,7 +1723,7 @@ motionnotify(uint32_t time)
 	/* If there's no client surface under the cursor, set the cursor image to a
 	 * default. This is what makes the cursor image appear when you move it
 	 * off of a client or over its border. */
-	if (!surface && (!cursor_image || strcmp(cursor_image, "left_ptr")))
+	if (!surface && !seat->drag && (!cursor_image || strcmp(cursor_image, "left_ptr")))
 		wlr_xcursor_manager_set_cursor_image(cursor_mgr, (cursor_image = "left_ptr"), cursor);
 
 	pointerfocus(c, surface, sx, sy, time);
@@ -2107,7 +2107,7 @@ setcursor(struct wl_listener *listener, void *data)
 	/* If we're "grabbing" the cursor, don't use the client's image, we will
 	 * restore it after "grabbing" sending a leave event, followed by a enter
 	 * event, which will result in the client requesting set the cursor surface */
-	if (cursor_mode != CurNormal)
+	if (cursor_mode != CurNormal && cursor_mode != CurPressed)
 		return;
 	cursor_image = NULL;
 	/* This can be sent by any client, so we check to make sure this one is
@@ -2773,14 +2773,12 @@ unmapnotify(struct wl_listener *listener, void *data)
 	if (c->mon)
 		c->mon->un_map = 1;
 
-	if (client_is_unmanaged(c))
-		goto end;
+	if (!client_is_unmanaged(c)) {
+		wl_list_remove(&c->link);
+		setmon(c, NULL, 0);
+		wl_list_remove(&c->flink);
+	}
 
-	wl_list_remove(&c->link);
-	setmon(c, NULL, 0);
-	wl_list_remove(&c->flink);
-
-end:
 	wl_list_remove(&c->commit.link);
 	wlr_scene_node_destroy(c->scene);
 	printstatus();
