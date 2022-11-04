@@ -165,6 +165,7 @@ typedef struct {
 	struct wlr_box geom;
 	Monitor *mon;
 	struct wlr_scene_node *scene;
+	struct wlr_scene_node *popups;
 	struct wl_list link;
 	int mapped;
 	struct wlr_layer_surface_v1 *layer_surface;
@@ -653,6 +654,7 @@ arrangelayer(Monitor *m, struct wl_list *list, struct wlr_box *usable_area, int 
 					state->margin.top, state->margin.right,
 					state->margin.bottom, state->margin.left);
 		wlr_scene_node_set_position(layersurface->scene, box.x, box.y);
+		wlr_scene_node_set_position(layersurface->popups, box.x, box.y);
 		wlr_layer_surface_v1_configure(wlr_layer_surface, box.width, box.height);
 	}
 }
@@ -887,7 +889,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 {
 	Monitor *m = wl_container_of(listener, m, destroy);
 	LayerSurface *l, *tmp;
-	int nmons, i;
+	int i;
 
 	for (i = 0; i <= ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY; i++) {
 		wl_list_for_each_safe(l, tmp, &m->layers[i], link) {
@@ -903,12 +905,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 	wlr_output_layout_remove(output_layout, m->wlr_output);
 	wlr_scene_output_destroy(m->scene_output);
 
-	if (!(i = 0) && (nmons = wl_list_length(&mons)))
-		do /* don't switch to disabled mons */
-			selmon = wl_container_of(mons.prev, selmon, link);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-
-	focusclient(focustop(selmon), 1);
 	closemon(m);
 	free(m);
 }
@@ -916,8 +912,17 @@ cleanupmon(struct wl_listener *listener, void *data)
 void
 closemon(Monitor *m)
 {
-	/* move closed monitor's clients to the focused one */
+	/* update selmon if needed and
+	 * move closed monitor's clients to the focused one */
 	Client *c;
+	if (wl_list_empty(&mons)) {
+		selmon = NULL;
+	} else if (m == selmon) {
+		int nmons = wl_list_length(&mons), i = 0;
+		do /* don't switch to disabled mons */
+			selmon = wl_container_of(mons.next, selmon, link);
+		while (!selmon->wlr_output->enabled && i++ < nmons);
+	}
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->isfloating && c->geom.x > m->m.width)
@@ -926,6 +931,7 @@ closemon(Monitor *m)
 		if (c->mon == m)
 			setmon(c, selmon, c->tags);
 	}
+	focusclient(focustop(selmon), 1);
 	printstatus();
 }
 
@@ -944,10 +950,14 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (layers[wlr_layer_surface->current.layer] != layersurface->scene->parent) {
 		wlr_scene_node_reparent(layersurface->scene,
 				layers[wlr_layer_surface->current.layer]);
+		wlr_scene_node_reparent(layersurface->popups,
+				layers[wlr_layer_surface->current.layer]);
 		wl_list_remove(&layersurface->link);
 		wl_list_insert(&layersurface->mon->layers[wlr_layer_surface->current.layer],
 				&layersurface->link);
 	}
+	if (wlr_layer_surface->current.layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+		wlr_scene_node_reparent(layersurface->popups, layers[LyrTop]);
 
 	if (wlr_layer_surface->current.committed == 0
 			&& layersurface->mapped == wlr_layer_surface->mapped)
@@ -1049,10 +1059,11 @@ createlayersurface(struct wl_listener *listener, void *data)
 	layersurface->mon = wlr_layer_surface->output->data;
 	wlr_layer_surface->data = layersurface;
 
-	layersurface->scene = wlr_layer_surface->surface->data =
-			wlr_scene_subsurface_tree_create(layers[wlr_layer_surface->pending.layer],
-			wlr_layer_surface->surface);
+	layersurface->scene = wlr_scene_subsurface_tree_create(
+			layers[wlr_layer_surface->pending.layer], wlr_layer_surface->surface);
 	layersurface->scene->data = layersurface;
+	layersurface->popups = wlr_layer_surface->surface->data =
+			&wlr_scene_tree_create(layers[wlr_layer_surface->pending.layer])->node;
 
 	wl_list_insert(&layersurface->mon->layers[wlr_layer_surface->pending.layer],
 			&layersurface->link);
@@ -1173,12 +1184,6 @@ createnotify(struct wl_listener *listener, void *data)
 		LayerSurface *l = toplevel_from_popup(xdg_surface->popup);
 		xdg_surface->surface->data = wlr_scene_xdg_surface_create(
 				xdg_surface->popup->parent->data, xdg_surface);
-		/* Raise to top layer if the inmediate parent of the popup is on
-		 * bottom/background layer, which will cause popups appear below the
-		 * x{dg,wayland} clients */
-		if (wlr_surface_is_layer_surface(xdg_surface->popup->parent) && l
-				&& l->layer_surface->current.layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
-			wlr_scene_node_reparent(xdg_surface->surface->data, layers[LyrTop]);
 		/* Probably the check of `l` is useless, the only thing that can be NULL
 		 * is its monitor */
 		if (!l || !l->mon)
@@ -1440,10 +1445,12 @@ Monitor *
 dirtomon(enum wlr_direction dir)
 {
 	struct wlr_output *next;
-	if ((next = wlr_output_layout_adjacent_output(output_layout,
+	if (wlr_output_layout_get(output_layout, selmon->wlr_output)
+			&& (next = wlr_output_layout_adjacent_output(output_layout,
 			dir, selmon->wlr_output, selmon->m.x, selmon->m.y)))
 		return next->data;
-	if ((next = wlr_output_layout_farthest_output(output_layout,
+	if (wlr_output_layout_get(output_layout, selmon->wlr_output)
+			&& (next = wlr_output_layout_farthest_output(output_layout,
 			dir ^ (WLR_DIRECTION_LEFT|WLR_DIRECTION_RIGHT),
 			selmon->wlr_output, selmon->m.x, selmon->m.y)))
 		return next->data;
@@ -1471,8 +1478,9 @@ focusclient(Client *c, int lift)
 		c->isurgent = 0;
 		client_restack_surface(c);
 
-		/* Don't change border color if there is an exclusive focus */
-		if (!exclusive_focus)
+		/* Don't change border color if there is an exclusive focus or we are
+		 * handling a drag operation */
+		if (!exclusive_focus && !seat->drag)
 			for (i = 0; i < 4; i++)
 				wlr_scene_rect_set_color(c->border[i], focuscolor);
 	}
@@ -1789,7 +1797,8 @@ monocle(Monitor *m)
 			continue;
 		resize(c, m->w, 0);
 	}
-	focusclient(focustop(m), 1);
+	if ((c = focustop(m)))
+		wlr_scene_node_raise_to_top(c->scene);
 }
 
 void
@@ -1954,28 +1963,13 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 	struct wlr_output_configuration_head_v1 *config_head;
 	int ok = 1;
 
-	/* First disable outputs we need to disable */
-	wl_list_for_each(config_head, &config->heads, link) {
-		struct wlr_output *wlr_output = config_head->state.output;
-		if (!wlr_output->enabled || config_head->state.enabled)
-			continue;
-		wlr_output_enable(wlr_output, 0);
-		if (test) {
-			ok &= wlr_output_test(wlr_output);
-			wlr_output_rollback(wlr_output);
-		} else {
-			ok &= wlr_output_commit(wlr_output);
-		}
-	}
-
-	/* Then enable outputs that need to */
 	wl_list_for_each(config_head, &config->heads, link) {
 		struct wlr_output *wlr_output = config_head->state.output;
 		Monitor *m = wlr_output->data;
-		if (!config_head->state.enabled)
-			continue;
 
-		wlr_output_enable(wlr_output, 1);
+		wlr_output_enable(wlr_output, config_head->state.enabled);
+		if (!config_head->state.enabled)
+			goto apply_or_test;
 		if (config_head->state.mode)
 			wlr_output_set_mode(wlr_output, config_head->state.mode);
 		else
@@ -1992,6 +1986,7 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 		wlr_output_set_transform(wlr_output, config_head->state.transform);
 		wlr_output_set_scale(wlr_output, config_head->state.scale);
 
+apply_or_test:
 		if (test) {
 			ok &= wlr_output_test(wlr_output);
 			wlr_output_rollback(wlr_output);
@@ -2001,7 +1996,7 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 			 * we test if that mode does not fail rather than just call wlr_output_commit().
 			 * We do not test normal modes because (at least in my hardware (@sevz17))
 			 * wlr_output_test() fails even if that mode can actually be set */
-			if (!config_head->state.mode)
+			if (!config_head->state.mode && config_head->state.enabled)
 				ok &= (output_ok = wlr_output_test(wlr_output)
 						&& wlr_output_commit(wlr_output));
 			else
@@ -2021,6 +2016,9 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 	else
 		wlr_output_configuration_v1_send_failed(config);
 	wlr_output_configuration_v1_destroy(config);
+
+	/* TODO: use a wrapper function? */
+	updatemons(NULL, NULL);
 }
 
 void
@@ -2744,6 +2742,9 @@ void
 startdrag(struct wl_listener *listener, void *data)
 {
 	struct wlr_drag *drag = data;
+	/* During drag the focus isn't sent to clients, this causes that
+	 * we don't update border color acording the pointer coordinates */
+	focusclient(NULL, 0);
 
 	if (!drag->icon)
 		return;
@@ -2963,15 +2964,33 @@ updatemons(struct wl_listener *listener, void *data)
 	struct wlr_output_configuration_v1 *config =
 		wlr_output_configuration_v1_create();
 	Client *c;
+	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+
+	/* First remove from the layout the disabled monitors */
+	wl_list_for_each(m, &mons, link) {
+		if (m->wlr_output->enabled)
+			continue;
+		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
+		config_head->state.enabled = 0;
+		/* Remove this output from the layout to avoid cursor enter inside it */
+		wlr_output_layout_remove(output_layout, m->wlr_output);
+		closemon(m);
+		memset(&m->m, 0, sizeof(m->m));
+		memset(&m->w, 0, sizeof(m->w));
+	}
+	/* Insert outputs that need to */
+	wl_list_for_each(m, &mons, link)
+		if (m->wlr_output->enabled
+				&& !wlr_output_layout_get(output_layout, m->wlr_output))
+			wlr_output_layout_add_auto(output_layout, m->wlr_output);
+	/* Now that we update the output layout we can get its box */
 	sgeom = *wlr_output_layout_get_box(output_layout, NULL);
 	wlr_scene_rect_set_size(root, sgeom.width, sgeom.height);
 	wl_list_for_each(m, &mons, link) {
-		struct wlr_output_configuration_head_v1 *config_head =
-			wlr_output_configuration_head_v1_create(config, m->wlr_output);
-
-		/* TODO: move clients off disabled monitors */
-		/* TODO: move focus if selmon is disabled */
+		if (!m->wlr_output->enabled)
+			continue;
+		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 
 		/* Get the effective monitor geometry to use for surfaces */
 		m->m = m->w = *wlr_output_layout_get_box(output_layout, m->wlr_output);
@@ -2981,7 +3000,7 @@ updatemons(struct wl_listener *listener, void *data)
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
 
-		config_head->state.enabled = m->wlr_output->enabled;
+		config_head->state.enabled = 1;
 		config_head->state.mode = m->wlr_output->current_mode;
 		config_head->state.x = m->m.x;
 		config_head->state.y = m->m.y;
