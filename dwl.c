@@ -6,8 +6,6 @@
 #include <libinput.h>
 #include <limits.h>
 #include <linux/input-event-codes.h>
-#include <pthread.h>
-#include <sched.h>
 #include <pixman-1/pixman.h>
 #include <signal.h>
 #include <stdio.h>
@@ -2310,38 +2308,11 @@ setsel(struct wl_listener *listener, void *data)
 	wlr_seat_set_selection(seat, event->source, event->serial);
 }
 
-static int child_policy;
-static struct sched_param child_prio;
-
-void
-rr_reset(void)
-{
-	pthread_setschedparam(pthread_self(), child_policy, &child_prio);
-}
-
-void
-rr(void)
-{
-	pthread_t self;
-	struct sched_param param;
-
-	self = pthread_self();
-
-	if (pthread_getschedparam(self, &child_policy, &child_prio) != 0)
-		return;
-
-	param.sched_priority = sched_get_priority_min(SCHED_RR);
-	if (pthread_setschedparam(self, SCHED_RR, &param) == 0)
-		pthread_atfork(NULL, NULL, rr_reset);
-}
-
 void
 setup(void)
 {
 	/* Force line-buffered stdout */
 	setvbuf(stdout, NULL, _IOLBF, 0);
-
-	rr();
 
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
