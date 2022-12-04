@@ -509,8 +509,14 @@ arrange(Monitor *m)
 {
 	Client *c;
 	wl_list_for_each(c, &clients, link)
-		if (c->mon == m)
+		if (c->mon == m) {
 			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
+			if (c->kiosk) {
+				struct wlr_box layout_box;
+				wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+				resize(c, layout_box, 0);
+			}
+		}
 
 	wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
 			(c = focustop(m)) && c->isfullscreen);
@@ -2171,7 +2177,6 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
-	struct wlr_box layout_box;
 	c->isfullscreen = fullscreen;
 	if (!c->mon)
 		return;
@@ -2182,10 +2187,7 @@ setfullscreen(Client *c, int fullscreen)
 
 	if (fullscreen) {
 		c->prev = c->geom;
-		if (c->kiosk) {
-			wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-			resize(c, layout_box, 0);
-		} else resize(c, c->mon->m, 0);
+		resize(c, c->mon->m, 0);
 	} else {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
