@@ -226,6 +226,7 @@ static void arrangelayers(Monitor *m);
 static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
 static void checkconstraintregion(void);
+static void center(Client *c, const struct wlr_box *box);
 static void chvt(const Arg *arg);
 static void checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
@@ -475,6 +476,10 @@ applyrules(Client *c)
 		} else
 			c->isfloating = 1;
 	}
+	if (c->isfloating) {
+		mon = xytomon(cursor->x, cursor->y);
+		center(c, &mon->w);
+	}
 	wlr_scene_node_reparent(&c->scene->node, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
 }
@@ -666,6 +671,24 @@ checkconstraintregion(void)
 	} else {
 		pixman_region32_clear(&active_confine);
 	}
+}
+
+void
+center(Client *c, const struct wlr_box *box)
+{
+	c->geom.x = cursor->x - c->geom.width / 2;
+	if (c->geom.x + c->geom.width > box->x + box->width)
+		c->geom.x = box->x + box->width - c->geom.width;
+	if (c->geom.x < box->x || c->geom.width > box->width)
+		c->geom.x = box->x;
+
+	c->geom.y = cursor->y - c->geom.height / 2;
+	if (c->geom.y + c->geom.height > box->y + box->height)
+		c->geom.y = box->y + box->height - c->geom.height;
+	if (c->geom.y < box->y || c->geom.height > box->height)
+		c->geom.y = box->y;
+
+	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
 }
 
 void
@@ -1584,6 +1607,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->isfloating = 1;
 		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloat]);
 		setmon(c, p->mon, p->tags);
+		center(c, &c->mon->w);
 	} else {
 		applyrules(c);
 	}
@@ -2074,6 +2098,8 @@ setfloating(Client *c, int floating)
 {
 	c->isfloating = floating;
 	wlr_scene_node_reparent(&c->scene->node, layers[c->isfloating ? LyrFloat : LyrTile]);
+	if (floating)
+		center(c, &c->mon->w);
 	arrange(c->mon);
 	printstatus();
 }
