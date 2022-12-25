@@ -2838,7 +2838,7 @@ togglefullscreen(const Arg *arg)
 void
 togglemaximizesel(const Arg *arg)
 {
-	Client *sel = selclient();
+	Client *sel = focustop(selmon);
 	if (sel)
 		setmaximized(sel, !sel->ismaximized);
 }
@@ -2855,7 +2855,7 @@ toggleminimize(struct wl_listener *listener, void *data)
 void
 toggleminimizesel(const Arg *arg)
 {
-	Client *sel = selclient();
+	Client *sel = focustop(selmon);
 	if (sel && !client_is_unmanaged(sel))
 		setfloating(sel, !sel->isfloating);
 }
