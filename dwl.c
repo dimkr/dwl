@@ -344,6 +344,7 @@ static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
 static struct wlr_session *session;
+static struct wlr_scene_rect *root;
 
 static struct wlr_xdg_shell *xdg_shell;
 static struct wlr_xdg_activation_v1 *activation;
@@ -2187,6 +2188,7 @@ setup(void)
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
+	root = wlr_scene_rect_create(&scene->tree, 0, 0, rootcolor);
 	for (i = 0; i < NUM_LAYERS; i++)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
@@ -2551,6 +2553,8 @@ updatemons(struct wl_listener *listener, void *data)
 	Client *c;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+	wlr_output_layout_get_box(output_layout, NULL, &sgeom);
+	wlr_scene_rect_set_size(root, sgeom.width, sgeom.height);
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
