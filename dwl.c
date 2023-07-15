@@ -2726,8 +2726,8 @@ snail(Monitor *m)
 		 * master area with this window
 		 */
 		if (mw > 0 && i == 0) {
-			resize(c, (struct wlr_box){.x = m->w.x, .y = m->w.y,
-				.width = mw, .height = m->w.height}, 0);
+			c->geom = (struct wlr_box){.x = m->w.x, .y = m->w.y,
+				.width = mw, .height = m->w.height};
 			/*
 			 * If the first window in the master area is wide, split it
 			 * horizontally and put next one on its right; otherwise, split it
@@ -2739,8 +2739,8 @@ snail(Monitor *m)
 		 * m->nmaster-th window
 		 */
 		} else if (i == m->nmaster) {
-			resize(c, (struct wlr_box){.x = m->w.x + mw, .y = m->w.y,
-				.width = m->w.width - mw, .height = m->w.height}, 0);
+			c->geom = (struct wlr_box){.x = m->w.x + mw, .y = m->w.y,
+				.width = m->w.width - mw, .height = m->w.height};
 			/*
 			 * If the first window in the stack is wide, split it horizontally
 			 * and put next one on its right; otherwise, split it vertically and
@@ -2751,10 +2751,10 @@ snail(Monitor *m)
 		 * Split the previous horizontally and put the current window on the right
 		 */
 		} else if (dir == WLR_DIRECTION_RIGHT) {
-			resize(c, (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
-				.width = prev->geom.width / 2, .height = prev->geom.height}, 0);
-			resize(prev, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
-				.width = prev->geom.width / 2, .height = prev->geom.height}, 0);
+			c->geom = (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
 			/*
 			 * If it's a stack window or the first narrow window in the master
 			 * area, put the next one below it
@@ -2765,32 +2765,39 @@ snail(Monitor *m)
 		 * Split the previous vertically and put the current window below it
 		 */
 		} else if (dir == WLR_DIRECTION_DOWN) {
-			resize(c, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
-				.width = prev->geom.width, .height = prev->geom.height / 2}, 0);
-			resize(prev, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
-				.width = prev->geom.width, .height = prev->geom.height / 2}, 0);
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
 			dir = WLR_DIRECTION_LEFT;
 		/*
 		 * Split the previous horizontally and put the current window on the left
 		 */
 		} else if (dir == WLR_DIRECTION_LEFT) {
-			resize(c, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
-				.width = prev->geom.width / 2, .height = prev->geom.height}, 0);
-			resize(prev, (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
-				.width = prev->geom.width / 2, .height = prev->geom.height}, 0);
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			prev->geom = (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
 			dir = WLR_DIRECTION_UP;
 		/*
 		 * Split the previous vertically and put the current window above it
 		 */
 		} else {
-			resize(c, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
-				.width = prev->geom.width, .height = prev->geom.height / 2}, 0);
-			resize(prev, (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
-				.width = prev->geom.width, .height = prev->geom.height / 2}, 0);
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
 			dir = WLR_DIRECTION_RIGHT;
 		}
 		i++;
 		prev = c;
+	}
+
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+
+		resize(c, c->geom, 0);
 	}
 }
 
