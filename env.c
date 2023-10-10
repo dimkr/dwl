@@ -207,6 +207,10 @@ loadtheme(void)
 	if (val)
 		parsecolor(val, focuscolor);
 
+	val = getenv("DWL_URGENT_COLOR");
+	if (val)
+		parsecolor(val, urgentcolor);
+
 	val = getenv("DWL_BORDER");
 	if (val && sscanf(val, "%u", &tmp) == 1)
 		borderpx = tmp;
