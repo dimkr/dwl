@@ -33,6 +33,7 @@
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
+#include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
@@ -119,6 +120,9 @@ typedef struct {
 	struct wl_listener fullscreen;
 	struct wlr_box prev; /* layout-relative, includes border */
 	struct wlr_box bounds;
+	struct wl_listener request_move;
+	struct wl_listener request_resize;
+	struct wl_listener request_minimize;
 #ifdef XWAYLAND
 	struct wl_listener activate;
 	struct wl_listener associate;
@@ -130,6 +134,7 @@ typedef struct {
 	uint32_t tags;
 	int isfloating, isurgent, isfullscreen;
 	uint32_t resize; /* configure serial of a pending resize */
+	int ismaximized;
 } Client;
 
 typedef struct {
@@ -235,6 +240,7 @@ static void arrangelayer(Monitor *m, struct wl_list *list,
 static void arrangelayers(Monitor *m);
 static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
+static void center(Client *c, const struct wlr_box *box);
 static void chvt(const Arg *arg);
 static void checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
@@ -289,6 +295,7 @@ static void outputmgrtest(struct wl_listener *listener, void *data);
 static void pointerfocus(Client *c, struct wlr_surface *surface,
 		double sx, double sy, uint32_t time);
 static void printstatus(void);
+static void powermgrsetmodenotify(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
@@ -301,18 +308,25 @@ static void setfloating(Client *c, int floating);
 static void setfullscreen(Client *c, int fullscreen);
 static void setgamma(struct wl_listener *listener, void *data);
 static void setlayout(const Arg *arg);
+static void setmaximized(Client *c, int maximized);
 static void setmfact(const Arg *arg);
 static void setmon(Client *c, Monitor *m, uint32_t newtags);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
+static void snail(Monitor *m);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
+static void startmove(struct wl_listener *listener, void *data);
+static void startresize(struct wl_listener *listener, void *data);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
 static void togglefloating(const Arg *arg);
 static void togglefullscreen(const Arg *arg);
+static void togglemaximizesel(const Arg *arg);
+static void toggleminimize(struct wl_listener *listener, void *data);
+static void toggleminimizesel(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unlocksession(struct wl_listener *listener, void *data);
@@ -344,6 +358,7 @@ static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
 static struct wlr_session *session;
+static struct wlr_scene_rect *root;
 
 static struct wlr_xdg_shell *xdg_shell;
 static struct wlr_xdg_activation_v1 *activation;
@@ -357,6 +372,7 @@ static struct wlr_output_manager_v1 *output_mgr;
 static struct wlr_gamma_control_manager_v1 *gamma_control_mgr;
 static struct wlr_virtual_keyboard_manager_v1 *virtual_keyboard_mgr;
 static struct wlr_cursor_shape_manager_v1 *cursor_shape_mgr;
+static struct wlr_output_power_manager_v1 *power_mgr;
 
 static struct wlr_cursor *cursor;
 static struct wlr_xcursor_manager *cursor_mgr;
@@ -377,6 +393,11 @@ static struct wlr_box sgeom;
 static struct wl_list mons;
 static Monitor *selmon;
 
+static const struct xkb_rule_names en_rules = {.layout = "us"};
+static struct xkb_context *en_context;
+static struct xkb_keymap *en_keymap;
+static struct xkb_state *en_state;
+
 #ifdef XWAYLAND
 static void activatex11(struct wl_listener *listener, void *data);
 static void associatex11(struct wl_listener *listener, void *data);
@@ -395,6 +416,8 @@ static xcb_atom_t netatom[NetLast];
 
 /* attempt to encapsulate suck into one file */
 #include "client.h"
+
+#include "env.c"
 
 /* function implementations */
 void
@@ -439,6 +462,10 @@ applyrules(Client *c)
 				if (r->monitor == i++)
 					mon = m;
 		}
+	}
+	if (c->isfloating) {
+		mon = xytomon(cursor->x, cursor->y);
+		center(c, &mon->w);
 	}
 	wlr_scene_node_reparent(&c->scene->node, layers[c->isfloating ? LyrFloat : LyrTile]);
 	setmon(c, mon, newtags);
@@ -598,6 +625,24 @@ buttonpress(struct wl_listener *listener, void *data)
 }
 
 void
+center(Client *c, const struct wlr_box *box)
+{
+	c->geom.x = cursor->x - c->geom.width / 2;
+	if (c->geom.x + c->geom.width > box->x + box->width)
+		c->geom.x = box->x + box->width - c->geom.width;
+	if (c->geom.x < box->x || c->geom.width > box->width)
+		c->geom.x = box->x;
+
+	c->geom.y = cursor->y - c->geom.height / 2;
+	if (c->geom.y + c->geom.height > box->y + box->height)
+		c->geom.y = box->y + box->height - c->geom.height;
+	if (c->geom.y < box->y || c->geom.height > box->height)
+		c->geom.y = box->y;
+
+	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
+}
+
+void
 chvt(const Arg *arg)
 {
 	wlr_session_change_vt(session, arg->ui);
@@ -639,6 +684,9 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
+	xkb_state_unref(en_state);
+	xkb_keymap_unref(en_keymap);
+	xkb_context_unref(en_context);
 }
 
 void
@@ -870,6 +918,7 @@ createmon(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new output (aka a display or
 	 * monitor) becomes available. */
 	struct wlr_output *wlr_output = data;
+	struct wlr_output_mode *preferred_mode, *mode;
 	const MonitorRule *r;
 	size_t i;
 	Monitor *m = wlr_output->data = ecalloc(1, sizeof(*m));
@@ -885,7 +934,20 @@ createmon(struct wl_listener *listener, void *data)
 		if (!r->name || strstr(wlr_output->name, r->name)) {
 			m->mfact = r->mfact;
 			m->nmaster = r->nmaster;
-			wlr_output_set_scale(wlr_output, r->scale);
+			if (r->scale > 0)
+				wlr_output_set_scale(wlr_output, r->scale);
+			else {
+				struct wlr_output_mode *native = wlr_output_preferred_mode(wlr_output);
+				float ppi = (native && native->height >= 1080 && wlr_output->phys_width > 0) ? native->width / (wlr_output->phys_width / 25.4) : 96;
+				if (ppi >= 96 * 2)
+					wlr_output_set_scale(wlr_output, 2);
+				else if (ppi >= 96 * 1.5)
+					wlr_output_set_scale(wlr_output, 1.5);
+				else if (ppi >= 96 * 1.25)
+					wlr_output_set_scale(wlr_output, 1.25);
+				else
+					wlr_output_set_scale(wlr_output, 1);
+			}
 			m->lt[0] = m->lt[1] = r->lt;
 			wlr_output_set_transform(wlr_output, r->rr);
 			m->m.x = r->x;
@@ -898,7 +960,17 @@ createmon(struct wl_listener *listener, void *data)
 	 * monitor supports only a specific set of modes. We just pick the
 	 * monitor's preferred mode; a more sophisticated compositor would let
 	 * the user configure it. */
-	wlr_output_set_mode(wlr_output, wlr_output_preferred_mode(wlr_output));
+	preferred_mode = wlr_output_preferred_mode(wlr_output);
+	wlr_output_set_mode(wlr_output, preferred_mode);
+	if (!wlr_output_test(wlr_output) && !wl_list_empty(&wlr_output->modes)) {
+		wl_list_for_each(mode, &wlr_output->modes, link) {
+			if (mode != preferred_mode) {
+				wlr_output_set_mode(wlr_output, mode);
+				if (wlr_output_test(wlr_output))
+					break;
+			}
+		}
+	}
 
 	/* Set up event listeners */
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);
@@ -984,6 +1056,12 @@ createnotify(struct wl_listener *listener, void *data)
 			fullscreennotify);
 	LISTEN(&xdg_surface->toplevel->events.request_maximize, &c->maximize,
 			maximizenotify);
+	LISTEN(&xdg_surface->toplevel->events.request_move, &c->request_move,
+			startmove);
+	LISTEN(&xdg_surface->toplevel->events.request_resize, &c->request_resize,
+			startresize);
+	LISTEN(&xdg_surface->toplevel->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 }
 
 void
@@ -1025,6 +1103,8 @@ createpointer(struct wlr_pointer *pointer)
 			libinput_device_config_accel_set_profile(libinput_device, accel_profile);
 			libinput_device_config_accel_set_speed(libinput_device, accel_speed);
 		}
+
+		inputconfig(libinput_device);
 	}
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
@@ -1123,6 +1203,10 @@ destroynotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&c->destroy.link);
 	wl_list_remove(&c->set_title.link);
 	wl_list_remove(&c->fullscreen.link);
+	wl_list_remove(&c->maximize.link);
+	wl_list_remove(&c->request_move.link);
+	wl_list_remove(&c->request_resize.link);
+	wl_list_remove(&c->request_minimize.link);
 #ifdef XWAYLAND
 	if (c->type != XDGShell) {
 		wl_list_remove(&c->activate.link);
@@ -1395,7 +1479,7 @@ keypress(struct wl_listener *listener, void *data)
 	/* Get a list of keysyms based on the keymap for this keyboard */
 	const xkb_keysym_t *syms;
 	int nsyms = xkb_state_key_get_syms(
-			kb->wlr_keyboard->xkb_state, keycode, &syms);
+			en_state, keycode, &syms);
 
 	int handled = 0;
 	uint32_t mods = wlr_keyboard_get_modifiers(kb->wlr_keyboard);
@@ -1556,6 +1640,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		c->isfloating = 1;
 		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloat]);
 		setmon(c, p->mon, p->tags);
+		center(c, &c->mon->w);
 	} else {
 		applyrules(c);
 	}
@@ -1571,18 +1656,10 @@ unset_fullscreen:
 void
 maximizenotify(struct wl_listener *listener, void *data)
 {
-	/* This event is raised when a client would like to maximize itself,
-	 * typically because the user clicked on the maximize button on
-	 * client-side decorations. dwl doesn't support maximization, but
-	 * to conform to xdg-shell protocol we still must send a configure.
-	 * Since xdg-shell protocol v5 we should ignore request of unsupported
-	 * capabilities, just schedule a empty configure when the client uses <5
-	 * protocol version
-	 * wlr_xdg_surface_schedule_configure() is used to send an empty reply. */
 	Client *c = wl_container_of(listener, c, maximize);
-	if (wl_resource_get_version(c->surface.xdg->resource)
-			< XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
-		wlr_xdg_surface_schedule_configure(c->surface.xdg);
+
+	if (c->mon)
+		setmaximized(c, !c->ismaximized);
 }
 
 void
@@ -1698,6 +1775,8 @@ moveresize(const Arg *arg)
 
 	/* Float the window and tell motionnotify to grab it */
 	setfloating(grabc, 1);
+	if (grabc->ismaximized)
+		setmaximized(grabc, 0);
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
 		grabcx = cursor->x - grabc->geom.x;
@@ -1856,6 +1935,14 @@ printstatus(void)
 }
 
 void
+powermgrsetmodenotify(struct wl_listener *listener, void *data)
+{
+	struct wlr_output_power_v1_set_mode_event *event = data;
+	wlr_output_enable(event->output, event->mode);
+	wlr_output_commit(event->output);
+}
+
+void
 quit(const Arg *arg)
 {
 	wl_display_terminate(dpy);
@@ -2000,7 +2087,10 @@ run(char *startup_cmd)
 	 * instead of (0, 0) and then jumping. still may not be fully
 	 * initialized, as the image/coordinates are not transformed for the
 	 * monitor when displayed here */
-	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
+	if (selmon)
+		wlr_cursor_warp_closest(cursor, NULL, selmon->w.x + selmon->w.width / 2, selmon->w.y + selmon->w.height / 2);
+	else
+		wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
 	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
 	/* Run the Wayland event loop. This does not return until you exit the
@@ -2052,6 +2142,8 @@ setfloating(Client *c, int floating)
 		return;
 	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen
 			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
+	if (floating)
+		center(c, &c->mon->w);
 	arrange(c->mon);
 	printstatus();
 }
@@ -2099,6 +2191,25 @@ setlayout(const Arg *arg)
 		selmon->lt[selmon->sellt] = (Layout *)arg->v;
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, LENGTH(selmon->ltsymbol));
 	arrange(selmon);
+	printstatus();
+}
+
+void
+setmaximized(Client *c, int maximized)
+{
+	if (c->isfullscreen || client_is_unmanaged(c))
+		return;
+	if (!c->isfloating)
+		setfloating(c, 1);
+
+	c->ismaximized = maximized;
+
+	if (maximized) {
+		c->prev = c->geom;
+		resize(c, (struct wlr_box){.x = c->mon->w.x, .y = c->mon->w.y, .width = c->mon->w.width, .height = c->mon->w.height}, 0);
+	} else
+		resize(c, (struct wlr_box){.x = c->prev.x, .y = c->prev.y, .width = c->prev.width, .height = c->prev.height}, 0);
+	arrange(c->mon);
 	printstatus();
 }
 
@@ -2187,6 +2298,7 @@ setup(void)
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
+	root = wlr_scene_rect_create(&scene->tree, 0, 0, rootcolor);
 	for (i = 0; i < NUM_LAYERS; i++)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
@@ -2242,6 +2354,9 @@ setup(void)
 
 	gamma_control_mgr = wlr_gamma_control_manager_v1_create(dpy);
 	LISTEN_STATIC(&gamma_control_mgr->events.set_gamma, setgamma);
+
+	power_mgr = wlr_output_power_manager_v1_create(dpy);
+	LISTEN_STATIC(&power_mgr->events.set_mode, powermgrsetmodenotify);
 
 	/* Creates an output layout, which a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
@@ -2328,6 +2443,10 @@ setup(void)
 	 * let us know when new input devices are available on the backend.
 	 */
 	wl_list_init(&keyboards);
+	en_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	en_keymap = xkb_keymap_new_from_names(en_context, &en_rules,
+		XKB_KEYMAP_COMPILE_NO_FLAGS);
+	en_state = xkb_state_new(en_keymap);
 	LISTEN_STATIC(&backend->events.new_input, inputdevice);
 	virtual_keyboard_mgr = wlr_virtual_keyboard_manager_v1_create(dpy);
 	LISTEN_STATIC(&virtual_keyboard_mgr->events.new_virtual_keyboard, virtualkeyboard);
@@ -2362,6 +2481,106 @@ setup(void)
 }
 
 void
+snail(Monitor *m)
+{
+	unsigned int i = 0, n = 0, mw = m->w.width;
+	Client *c, *prev;
+	enum wlr_direction dir = WLR_DIRECTION_RIGHT;
+
+	wl_list_for_each(c, &clients, link)
+		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
+			n++;
+	if (n == 0)
+		return;
+
+	if (n > m->nmaster)
+		mw = m->nmaster ? m->w.width * m->mfact : 0;
+
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+
+		/*
+		 * If the master area exists and this is the first window, fill the
+		 * master area with this window
+		 */
+		if (mw > 0 && i == 0) {
+			c->geom = (struct wlr_box){.x = m->w.x, .y = m->w.y,
+				.width = mw, .height = m->w.height};
+			/*
+			 * If the first window in the master area is wide, split it
+			 * horizontally and put next one on its right; otherwise, split it
+			 * vertically and put the next one below it
+			 */
+			dir = c->geom.width > m->w.height ? WLR_DIRECTION_RIGHT : WLR_DIRECTION_DOWN;
+		/*
+		 * If the master area is full or doesn't exist, fill the stack with the
+		 * m->nmaster-th window
+		 */
+		} else if (i == m->nmaster) {
+			c->geom = (struct wlr_box){.x = m->w.x + mw, .y = m->w.y,
+				.width = m->w.width - mw, .height = m->w.height};
+			/*
+			 * If the first window in the stack is wide, split it horizontally
+			 * and put next one on its right; otherwise, split it vertically and
+			 * put the next one below it
+			 */
+			dir = c->geom.width > m->w.height ? WLR_DIRECTION_RIGHT : WLR_DIRECTION_DOWN;
+		/*
+		 * Split the previous horizontally and put the current window on the right
+		 */
+		} else if (dir == WLR_DIRECTION_RIGHT) {
+			c->geom = (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			/*
+			 * If it's a stack window or the first narrow window in the master
+			 * area, put the next one below it
+			 */
+			if (i >= m->nmaster || c->geom.width < m->w.height)
+				dir = WLR_DIRECTION_DOWN;
+		/*
+		 * Split the previous vertically and put the current window below it
+		 */
+		} else if (dir == WLR_DIRECTION_DOWN) {
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			dir = WLR_DIRECTION_LEFT;
+		/*
+		 * Split the previous horizontally and put the current window on the left
+		 */
+		} else if (dir == WLR_DIRECTION_LEFT) {
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			prev->geom = (struct wlr_box){.x = prev->geom.x + prev->geom.width / 2, .y = prev->geom.y,
+				.width = prev->geom.width / 2, .height = prev->geom.height};
+			dir = WLR_DIRECTION_UP;
+		/*
+		 * Split the previous vertically and put the current window above it
+		 */
+		} else {
+			c->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			prev->geom = (struct wlr_box){.x = prev->geom.x, .y = prev->geom.y + prev->geom.height / 2,
+				.width = prev->geom.width, .height = prev->geom.height / 2};
+			dir = WLR_DIRECTION_RIGHT;
+		}
+		i++;
+		prev = c;
+	}
+
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+
+		resize(c, c->geom, 0);
+	}
+}
+
+void
 spawn(const Arg *arg)
 {
 	if (fork() == 0) {
@@ -2381,6 +2600,22 @@ startdrag(struct wl_listener *listener, void *data)
 
 	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
 	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
+}
+
+void
+startmove(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_move);
+
+	moveresize(&(Arg){.ui = CurMove});
+}
+
+void
+startresize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_resize);
+
+	moveresize(&(Arg){.ui = CurResize});
 }
 
 void
@@ -2452,6 +2687,31 @@ togglefullscreen(const Arg *arg)
 	Client *sel = focustop(selmon);
 	if (sel)
 		setfullscreen(sel, !sel->isfullscreen);
+}
+
+void
+togglemaximizesel(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (sel)
+		setmaximized(sel, !sel->ismaximized);
+}
+
+void
+toggleminimize(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, request_minimize);
+
+	if (c->mon && !client_is_unmanaged(c))
+		setfloating(c, !c->isfloating);
+}
+
+void
+toggleminimizesel(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (sel && !client_is_unmanaged(sel))
+		setfloating(sel, !sel->isfloating);
 }
 
 void
@@ -2551,6 +2811,8 @@ updatemons(struct wl_listener *listener, void *data)
 	Client *c;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+	wlr_output_layout_get_box(output_layout, NULL, &sgeom);
+	wlr_scene_rect_set_size(root, sgeom.width, sgeom.height);
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
@@ -2801,6 +3063,14 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
 	LISTEN(&xsurface->events.destroy, &c->destroy, destroynotify);
 	LISTEN(&xsurface->events.request_fullscreen, &c->fullscreen, fullscreennotify);
+	LISTEN(&xsurface->events.request_move, &c->request_move,
+			startmove);
+	LISTEN(&xsurface->events.request_resize, &c->request_resize,
+			startresize);
+	LISTEN(&xsurface->events.request_maximize, &c->maximize,
+			maximizenotify);
+	LISTEN(&xsurface->events.request_minimize, &c->request_minimize,
+			toggleminimize);
 }
 
 void
@@ -2894,6 +3164,7 @@ main(int argc, char *argv[])
 	/* Wayland requires XDG_RUNTIME_DIR for creating its communications socket */
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
+	loadtheme();
 	setup();
 	run(startup_cmd);
 	cleanup();
