@@ -396,6 +396,8 @@ static xcb_atom_t netatom[NetLast];
 /* attempt to encapsulate suck into one file */
 #include "client.h"
 
+#include "env.c"
+
 /* function implementations */
 void
 applybounds(Client *c, struct wlr_box *bbox)
@@ -1024,6 +1026,8 @@ createpointer(struct wlr_pointer *pointer)
 			libinput_device_config_accel_set_profile(libinput_device, accel_profile);
 			libinput_device_config_accel_set_speed(libinput_device, accel_speed);
 		}
+
+		inputconfig(libinput_device);
 	}
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
@@ -2894,6 +2898,7 @@ main(int argc, char *argv[])
 	/* Wayland requires XDG_RUNTIME_DIR for creating its communications socket */
 	if (!getenv("XDG_RUNTIME_DIR"))
 		die("XDG_RUNTIME_DIR must be set");
+	loadtheme();
 	setup();
 	run(startup_cmd);
 	cleanup();
